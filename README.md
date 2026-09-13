@@ -11,18 +11,20 @@
 跑在 **GitHub Actions** 上——**零服务器成本**，Fork 下来配几个 Secret 就能用。
 
 ```text
-🌅 早报 | 2026-09-13 星期日 08:00
-早上好!
+🌅 早报 · 2026-09-13 星期日 08:00
+早上好！
+────────────────────
 
-🌤 天气 · 你的城市
-☀️ 晴 19.2 ~ 29.4°C(当前 21.0°C)| 降水概率 10%
+▌🌤 天气 · 你的城市
+☀️ 晴 ｜ 19 ~ 29°C（当前 21.0°C）
+💧 降水概率 10%
 
-🚀 GitHub 高星新项目 (2)
-• cn/awesome-project ⭐ 321 [TypeScript]
+▌🚀 GitHub 高星新项目 · 2 条
+• cn/awesome-project ⭐ 321 · TypeScript
   一个很棒的新项目描述
   https://github.com/cn/awesome-project
 
-🗞 订阅更新 (2)
+▌🗞 订阅更新 · 2 条
 • [阮一峰的网络日志] 科技爱好者周刊(第 xxx 期)
   http://www.ruanyifeng.com/blog/2026/09/weekly-issue-xxx.html
 ```

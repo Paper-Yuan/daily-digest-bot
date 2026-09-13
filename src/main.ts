@@ -162,7 +162,7 @@ async function main(): Promise<void> {
   const isEvening = zp.hour >= 12;
   const reportCtx: ReportContext = {
     reportKind: isEvening ? 'evening' : 'morning',
-    greeting: `${isEvening ? '晚上好' : '早上好'}${cfg.user?.name ? `,${cfg.user.name}` : ''}`,
+    greeting: `${isEvening ? '晚上好' : '早上好'}${cfg.user?.name ? `，${cfg.user.name}` : ''}`,
     dateLabel: `${zp.year}-${pad2(zp.month)}-${pad2(zp.day)} ${zhWeekday(zp.weekday)}`,
     timeLabel: `${pad2(zp.hour)}:${pad2(zp.minute)}`,
     weather,
