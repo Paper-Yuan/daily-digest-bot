@@ -1,0 +1,24 @@
+# CI:推送/PR 时跑类型检查与全量测试,给 main 分支加质量信号。
+# 与每日早晚报 workflow(定时/手动)互相独立。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
