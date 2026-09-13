@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.log
+config/config.local.yaml
+# 去重状态不入库:CI 用 actions/cache 传递,本地运行自动生成
+data/

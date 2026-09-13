@@ -1,0 +1,68 @@
+# 每日早报 + 晚报:GitHub Actions 定时触发,零服务器成本。
+# 注意:cron 用的是 UTC 时间,北京时间 = UTC + 8。
+#   0 0 * * *   = 北京时间每天 08:00(早报)
+#   0 13 * * *  = 北京时间每天 21:00(晚报)
+# 报告是早报还是晚报由程序按运行时刻的本地时间自动判定。
+# 顺延说明:GitHub Actions 定时任务可能延迟 0~30 分钟,属正常现象。
+name: 每日早晚报
+
+on:
+  schedule:
+    - cron: "0 0 * * *"  # 北京时间 08:00 早报
+    - cron: "0 13 * * *" # 北京时间 21:00 晚报
+  workflow_dispatch: # 支持手动触发(可在 Actions 页面勾选 dryRun / force)
+    inputs:
+      dryRun:
+        description: "仅预览,不推送、不写状态"
+        type: boolean
+        default: false
+      force:
+        description: "忽略去重状态,全量预览"
+        type: boolean
+        default: false
+
+# 去重状态经 actions/cache 传递,仓库本身只需读权限
+permissions:
+  contents: read
+
+# 同一时刻只允许一个实例,避免状态缓存互相覆盖
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # 恢复上次运行写入的去重状态;本次运行结束后由 cache 的 post 阶段自动保存
+      - name: 恢复去重状态
+        uses: actions/cache@v4
+        with:
+          path: data/state.json
+          key: bot-state-${{ github.run_id }}
+          restore-keys: |
+            bot-state-
+
+      - run: npm ci
+
+      - name: 生成并发送早晚报
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          QWEATHER_API_KEY: ${{ secrets.QWEATHER_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }} # 提升 GitHub API 限额(60→5000 次/小时)
+        run: |
+          FLAGS=""
+          if [[ "${{ inputs.force }}" == "true" ]]; then FLAGS="$FLAGS --force"; fi
+          if [[ "${{ inputs.dryRun }}" == "true" ]]; then FLAGS="$FLAGS --dry-run --force"; fi
+          npm run morning -- $FLAGS

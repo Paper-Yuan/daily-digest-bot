@@ -1,0 +1,83 @@
+# ============================================================
+# 个人聚合早报配置(复制为 config/config.yaml 后修改)
+# 密钥一律走环境变量,不写在这里:
+#   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+#   FEISHU_WEBHOOK_URL / FEISHU_SECRET(可选,加签密钥)
+#   QWEATHER_API_KEY(可选,和风天气预警)
+#   GITHUB_TOKEN(GitHub Actions 会自动注入,本地可不配)
+# ============================================================
+
+timezone: Asia/Shanghai          # "今天"以此时区为准
+
+user:
+  name: ""                       # 报告开头的称呼,如 "同学";留空则不称呼
+
+weather:
+  enabled: true
+  locationName: 北京             # 仅用于展示
+  latitude: 39.9042              # Open-Meteo 免费、无需 key
+  longitude: 116.4074
+  # 可选:接入和风天气预警(免费订阅 host 用 devapi.qweather.com,付费用 api.qweather.com)
+  # qweather:
+  #   host: devapi.qweather.com
+  #   locationId: "101010100"     # 城市 LocationID,见和风文档
+
+calendar:
+  enabled: true
+  ics:                           # 日历订阅链接(Google/Apple 日历均可导出 ICS),可为空列表
+    - name: 我的日历
+      url: ""
+  courses:                       # 课表(可选),与 ICS 合并展示
+    semesterStart: "2026-09-07"  # 学期第 1 周的周一
+    items: []
+    # - name: 高等数学
+    #   weekday: 1               # 1=周一 ... 7=周日
+    #   start: "08:00"
+    #   end: "09:40"
+    #   location: 教三-101
+    #   teacher: 张三
+    #   weeks: "1-16"            # 周次,支持 "1,3,5-8";缺省=每周
+
+github:
+  enabled: true
+  repos:                         # 关注 Release 的仓库,owner/name;不需要就留空列表 []
+    - microsoft/TypeScript
+    - vuejs/core
+  includePrerelease: false
+  maxPerRepo: 3
+  firstRunQuiet: true            # 首次运行只记录不推送,避免把历史版本全推一遍
+  discover:                      # 发现高星新项目(与 repos 可并存,也可只用其中一个)
+    enabled: false
+    minStars: 100                # star 下限
+    createdWithinDays: 7         # 只看最近 N 天创建的仓库
+    chineseOnly: true            # 名称/描述含中文才算"中文区"(启发式过滤)
+    maxItems: 10
+    firstRunQuiet: false         # 首次运行直接展示当前榜单
+
+rss:
+  enabled: true
+  maxPerFeed: 5
+  firstRunQuiet: true
+  feeds:
+    - name: 阮一峰的网络日志
+      url: https://www.ruanyifeng.com/blog/atom.xml
+    - name: Solidot
+      url: https://www.solidot.org/index.rss
+
+baiduhot:
+  enabled: true
+  maxItems: 10                   # 每次推送当前热搜榜 Top 10,新上榜词条带 🆕
+
+notify:
+  # enabled 缺省 = 自动:配了环境变量就发送,没配就跳过
+  # enabled: true  = 强制启用,缺环境变量按故障处理(任务退出码 1,便于在 CI 里暴露配置遗漏)
+  telegram:
+    enabled: ~
+  feishu:
+    enabled: ~
+
+limits:
+  maxCalendarEvents: 10
+  maxReleases: 8
+  maxRssItems: 10
+  summaryChars: 100              # Release/RSS 摘要截断长度
