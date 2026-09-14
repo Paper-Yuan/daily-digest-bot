@@ -186,8 +186,9 @@ async function applyPublishLock(
   }
 
   const target = args.at ?? cfg.schedule?.[slot];
-  if (cfg.schedule?.lockTime === false) {
-    console.log('[lock] lockTime=false,立即发送');
+  if (cfg.schedule?.lockTime !== true) {
+    // 未启用发布锚:cron 定在目标时刻直接发送,接受 GitHub 排队带来的到达时间波动
+    console.log(`[lock] 未启用发布锚(lockTime=false),立即发送`);
     return true;
   }
 
@@ -324,12 +325,14 @@ async function main(): Promise<void> {
   }
 
   const { attempted, okCount } = await sendToChannels(cfg, msg, image);
+  const slot = kind === 'quick' ? null : kind;
   if (okCount > 0) {
     // 快报是快照:不写状态,不占用早晚报的去重游标
     if (isSnapshot) {
       console.log(`\n快报已推送 ${okCount}/${attempted} 个渠道(快照语义,未写入去重状态)`);
     } else {
-      if (kind !== 'quick') markSent(draft, slotForHour(zp.hour), todayYmd);
+      // 仅定时运行记录"当日已发":手动运行不记录,保证你手动触发后当天定时仍会正常送达
+      if (slot && args.scheduled) markSent(draft, slot, todayYmd);
       saveStateAtomic(path.resolve(cfg.statePath), draft);
       console.log(`\n推送成功 ${okCount}/${attempted} 个渠道,状态已写入 ${cfg.statePath}`);
     }
@@ -340,7 +343,7 @@ async function main(): Promise<void> {
   } else {
     // 没配置任何真实渠道(仅控制台):照常落盘,避免之后重复推送
     if (!isSnapshot) {
-      if (kind !== 'quick') markSent(draft, slotForHour(zp.hour), todayYmd);
+      if (slot && args.scheduled) markSent(draft, slot, todayYmd);
       saveStateAtomic(path.resolve(cfg.statePath), draft);
       console.log(`\n未配置真实推送渠道(仅控制台输出),状态已写入 ${cfg.statePath}`);
     }

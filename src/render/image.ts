@@ -145,7 +145,8 @@ function getCanvas(): CanvasModule | null {
   if (canvasMod !== undefined) return canvasMod;
   try {
     // 运行时动态加载:可选依赖,未安装时 catch 后返回 null
-    canvasMod = require('@napi-rs/canvas') as CanvasModule;  } catch {
+    canvasMod = require('@napi-rs/canvas') as CanvasModule;
+  } catch {
     canvasMod = null;
   }
   return canvasMod;
@@ -630,11 +631,12 @@ function buildReleaseCard(m: CanvasCtx, releases: GithubRelease[], theme: string
 function buildDiscoveryCard(m: CanvasCtx, items: GithubDiscovery[], theme: string, contentW: number): Card {
   const lines: LineSpec[] = [];
   for (const d of items) {
-    lines.push({ text: `• ${clean(d.repo)}`, style: 'body', maxLines: 1 });
+    // 仓库名与星数/语言合并成一行:比拆两行更紧凑,同时给介绍留出视觉权重
     const meta = `星 ${fmtStars(d.stars)}${d.language ? ` · ${clean(d.language)}` : ''}`;
-    lines.push({ text: meta, style: 'muted', color: COLORS.muted, indent: 14, maxLines: 1 });
+    lines.push({ text: `• ${clean(d.repo)}   ${meta}`, style: 'body', maxLines: 1 });
+    // 单句介绍:固定一行,超长截断(数据层已取首句并限长)
     if (d.description) {
-      lines.push({ text: clean(d.description), style: 'muted', color: COLORS.muted, indent: 14, maxLines: 2 });
+      lines.push({ text: clean(d.description), style: 'muted', color: COLORS.muted, indent: 14, maxLines: 1 });
     }
     if (d.url) {
       lines.push({ text: clean(d.url), style: 'url', color: COLORS.faint, indent: 14, maxLines: 1 });

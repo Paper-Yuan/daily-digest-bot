@@ -83,13 +83,15 @@ limits:
   maxHotItems: 10                # 热搜条数上限
   summaryChars: 100              # Release/RSS 摘要截断长度
 
-# 发布时间锁定:定时任务会提前触发,程序等到目标时刻再发,确保不会早于设定时间。
-# GitHub 的定时任务只晚不早,所以"提前启动 + 等到点"能抵掉高峰期 20~40 分钟的延迟。
+# 发布时刻:默认 cron 定在目标时刻直接发送(不做等待)。
+# GitHub 的定时任务会有排队延迟,实际到达时间可能比目标晚几分钟到几十分钟。
+# 若希望尽量准点:把 lockTime 设为 true,并把 workflow 的 cron 提前 15~20 分钟
+# (程序启动后会等到目标时刻再发;代价是等待期间占用 Actions 分钟数)。
 schedule:
   morning: "08:00"               # 早报目标发布时刻(本地时区)
   evening: "21:00"               # 晚报目标发布时刻
-  lockTime: true                 # false = 触发即发(省 Actions 分钟数,但会受延迟影响)
-  maxWaitMinutes: 30             # 等待上限:超过就放弃等待立即发送,避免白占 CI
+  lockTime: false                # true = 等到目标时刻再发
+  maxWaitMinutes: 30             # lockTime=true 时的等待上限,超过则立即发送
 
 # 图片版报告:与文本一同推送(Telegram 先图后文;飞书 webhook 不支持图片,自动仅发文本)。
 # 生成失败(无字体/无网络/库不可用)会自动降级为纯文本,绝不影响推送本身。

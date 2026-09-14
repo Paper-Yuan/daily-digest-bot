@@ -1,7 +1,7 @@
 /** GitHub Releases 模块:过滤、去重、firstRunQuiet、force、部分失败降级 */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchGithub } from '../src/modules/github';
+import { fetchGithub, toOneLineIntro } from '../src/modules/github';
 import { emptyState } from '../src/utils/state';
 import { makeCfg } from './helpers';
 import type { BotConfig, FetchContext, GithubConfig, GithubDiscoverConfig } from '../src/types';
@@ -200,5 +200,50 @@ describe('fetchGithub discover 模式', () => {
     expect(res.ok).toBe(false);
     expect(res.error).toContain('新项目发现失败');
     expect(res.error).toContain('HTTP 500');
+  });
+});
+
+describe('toOneLineIntro(单句介绍)', () => {
+  it('只取第一个句末标点之前的内容', () => {
+    expect(toOneLineIntro('一个很棒的项目。它还支持很多东西。', 60)).toBe('一个很棒的项目。');
+    expect(toOneLineIntro('Fast tool for X. Works everywhere.', 60)).toBe('Fast tool for X.');
+    expect(toOneLineIntro('这项目真好！后面还有内容', 60)).toBe('这项目真好！');
+  });
+
+  it('中文逗号/顿号不算句末,不会把一句话切碎', () => {
+    const s = '基于 Cloudflare WARP 的可视化注册、配置生成工具，支持多客户端转换';
+    expect(toOneLineIntro(s, 60)).toBe(s);
+  });
+
+  it('清洗 Markdown/HTML 并折叠空白', () => {
+    expect(toOneLineIntro('![图](https://x/y.png) 看 [文档](https://a.b) 吧', 60)).toBe('看 文档 吧');
+    expect(toOneLineIntro('<b>粗体</b>\n换行   多空格', 60)).toBe('粗体 换行 多空格');
+  });
+
+  it('超长内容按上限截断并加省略号', () => {
+    const long = '这是一个特别特别长的描述'.repeat(6); // 无句末标点
+    const out = toOneLineIntro(long, 20);
+    expect(out).toBeDefined();
+    expect(out?.length).toBe(21); // 20 字符 + …
+    expect(out?.endsWith('…')).toBe(true);
+  });
+
+  it('空值/纯空白返回 undefined', () => {
+    expect(toOneLineIntro(undefined, 50)).toBeUndefined();
+    expect(toOneLineIntro('', 50)).toBeUndefined();
+    expect(toOneLineIntro('   ', 50)).toBeUndefined();
+  });
+
+  it('discovery 输出始终带单句介绍(缺描述时给兜底)', async () => {
+    stubGithubApi();
+    const res = await fetchGithub(ghCtx(discCfg({ chineseOnly: false }), emptyState(), true));
+    const items = res.data?.discoveries ?? [];
+    expect(items.length).toBeGreaterThan(0);
+    for (const d of items) {
+      expect(typeof d.description).toBe('string');
+      expect(d.description!.length).toBeGreaterThan(0);
+    }
+    // 示例描述 "an english project" 无句末标点,应原样返回
+    expect(items.find((d) => d.repo === 'foo/bar')?.description).toBe('an english project');
   });
 });

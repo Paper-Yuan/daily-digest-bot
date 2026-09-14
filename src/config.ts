@@ -54,7 +54,9 @@ export function defaultConfig(): BotConfig {
     schedule: {
       morning: '08:00',
       evening: '21:00',
-      lockTime: true,
+      // 默认不等待:cron 定在目标时刻,实际到达时间受 GitHub 排队影响(可能晚几分钟到几十分钟)
+      // 想锁准点就设为 true —— 代价是等待期间占用 Actions 分钟数
+      lockTime: false,
       maxWaitMinutes: 30,
     },
     image: {

@@ -52,6 +52,8 @@ const SEEN_CAP = 50;
 const DISCOVERY_SEEN_CAP = 300;
 const DEFAULT_MAX_PER_REPO = 3;
 const DEFAULT_SUMMARY_CHARS = 100;
+/** 新项目"单句介绍"的长度上限(图片按单行渲染,过长会被截断) */
+const INTRO_MAX_CHARS = 52;
 const DEFAULT_DISCOVER = {
   createdWithinDays: 7,
   minStars: 100,
@@ -134,8 +136,37 @@ function toRelease(r: GhApiRelease, repo: string, summaryChars: number): GithubR
   };
 }
 
-/** 统一给 GitHub API 用的请求头(带 token 提升限额) */
-function githubHeaders(): Record<string, string> {
+/**
+ * 把仓库描述规整为"单句介绍":去 Markdown/HTML、折叠空白、只取第一句、按上限截断。
+ *
+ * 为什么取首句而非整段:新项目卡片按"一行"展示介绍,整段描述会被硬截成半句话
+ * (如 "…支持 Clash/Mihomo 智能分流、Shadowrocket、sing-box、本地 VLE"),可读性差。
+ * 取首个句末标点之前的内容,保证是一句完整的话。
+ * 注意:中文的逗号/顿号是句内停顿,不作为断句依据,否则会把一句话切碎。
+ */
+export function toOneLineIntro(
+  desc: string | undefined | null,
+  maxChars: number,
+): string | undefined {
+  if (!desc) return undefined;
+  const s = desc
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '') // Markdown 图片
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // 链接留文本
+    .replace(/<[^>]+>/g, '') // HTML 标签
+    .replace(/[\r\n]+/g, ' ') // 换行先折成空格,避免多行描述串味
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return undefined;
+  // 断句:中文句末标点(。！？；)直接断;**英文句点只在"后接空格或结尾"时才算句末**,
+  // 避免把 v1.2、Node.js、U.S. 这类内部含点的写法切断。
+  const breaker = /^.*?(?:[。！？；]|\.(?=\s|$))/;
+  const hit = breaker.exec(s)?.[0]?.trim();
+  let out = hit || s;
+  if (out.length > maxChars) out = `${out.slice(0, maxChars)}…`;
+  return out || undefined;
+}
+
+/** 统一给 GitHub API 用的请求头(带 token 提升限额) */function githubHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
@@ -305,9 +336,7 @@ async function discoverPart(
   const fresh = (force ? freshBase : freshBase.filter((r) => !prevSeen.includes(r.id)))
     .slice(0, maxItems);
 
-  const summaryChars = ctx.cfg.limits.summaryChars ?? DEFAULT_SUMMARY_CHARS;
   const items: GithubDiscovery[] = fresh.map((r) => {
-    const desc = (r.description ?? '').replace(/\s+/g, ' ').trim();
     const item: GithubDiscovery = {
       repo: r.full_name,
       url: r.html_url,
@@ -315,7 +344,8 @@ async function discoverPart(
       createdAt: r.created_at,
     };
     if (r.language) item.language = r.language;
-    if (desc) item.description = desc.length > summaryChars ? `${desc.slice(0, summaryChars)}…` : desc;
+    // 单句介绍:描述取首句;仓库没写描述时给一句兜底,保证卡片信息结构一致
+    item.description = toOneLineIntro(r.description, INTRO_MAX_CHARS) ?? '暂无简介';
     return item;
   });
   return { items, warnings: [], failed: false };

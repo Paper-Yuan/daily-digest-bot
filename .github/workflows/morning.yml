@@ -1,18 +1,17 @@
 # 每日早报 + 晚报 + 随时快报:GitHub Actions 定时触发,零服务器成本。
 #
-# 发布时间锁定:cron 设在目标时刻「之前」,进程启动后等到目标时刻再发。
-# GitHub 的定时任务只晚不早(高峰期可能延迟 20~40 分钟),提前启动正好把延迟吃掉,
-# 因此正常情况下你会在 08:00 / 21:00 准点收到,而不是随机延迟后的时间。
-#   UTC 23:45 = 北京 07:45 启动 → 锁定 08:00 发布(早报)
-#   UTC 12:45 = 北京 20:45 启动 → 锁定 21:00 发布(晚报)
-# 代价:等待会占用 Actions 分钟数(私有仓库免费额度 2000 分钟/月)。
-#      想省额度可把 cron 推后、或设 schedule.lockTime: false 退化为"触发即发"。
+# 发布时刻:cron 直接定在目标时刻(不等待)。GitHub 的定时任务是排队执行的,
+# 高峰期可能晚几分钟到几十分钟到达,这属于平台行为,本项目不做等待补偿。
+#   UTC 00:00 = 北京 08:00 → 早报
+#   UTC 13:00 = 北京 21:00 → 晚报
+# (若想尽量准点:把下面 cron 各提前 15~20 分钟,并把 config 的 schedule.lockTime 设为 true,
+#  程序会等到目标时刻再发 —— 代价是等待期间占用 Actions 分钟数。)
 name: 每日早晚报
 
 on:
   schedule:
-    - cron: "45 23 * * *" # 北京 07:45 启动 → 08:00 早报
-    - cron: "45 12 * * *" # 北京 20:45 启动 → 21:00 晚报
+    - cron: "0 0 * * *"  # 北京 08:00 早报
+    - cron: "0 13 * * *" # 北京 21:00 晚报
   workflow_dispatch: # 手动触发:可选模式,支持预览
     inputs:
       mode:
@@ -44,8 +43,7 @@ concurrency:
 jobs:
   report:
     runs-on: ubuntu-latest
-    # 需容纳"等到目标时刻"的等待(最多 maxWaitMinutes),故放宽到 30 分钟
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
