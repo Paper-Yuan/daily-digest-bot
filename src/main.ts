@@ -19,12 +19,14 @@ import type {
   BotConfig,
   BotState,
   BaiduHotSection,
+  BiliHotSection,
   CalendarSection,
   FetchContext,
   GithubSection,
   LimitsConfig,
   ModuleName,
   ModuleResult,
+  PersonalSection,
   ReportContext,
   ReportFailure,
   ReportKind,
@@ -45,6 +47,8 @@ import { fetchCalendar } from './modules/calendar';
 import { fetchGithub } from './modules/github';
 import { fetchRss } from './modules/rss';
 import { fetchBaiduHot } from './modules/baiduhot';
+import { fetchBiliHot } from './modules/bilibili';
+import { fetchPersonal } from './modules/personal';
 import { renderReport } from './render/report';
 import { renderReportImage } from './render/image';
 import { sendConsole } from './notify/console';
@@ -243,6 +247,7 @@ async function main(): Promise<void> {
     state: draft,
     now,
     force: args.force || isSnapshot,
+    reportKind: kind,
   };
 
   const only = args.only;
@@ -254,6 +259,8 @@ async function main(): Promise<void> {
   if (wanted('github') && cfg.github.enabled !== false) runners.push({ name: 'github', run: () => fetchGithub(ctx) });
   if (wanted('rss') && cfg.rss.enabled !== false) runners.push({ name: 'rss', run: () => fetchRss(ctx) });
   if (wanted('baiduhot') && cfg.baiduhot?.enabled !== false) runners.push({ name: 'baiduhot', run: () => fetchBaiduHot(ctx) });
+  if (wanted('bilibili') && cfg.bilibili?.enabled === true) runners.push({ name: 'bilibili', run: () => fetchBiliHot(ctx) });
+  if (wanted('personal') && cfg.personal?.enabled === true) runners.push({ name: 'personal', run: () => fetchPersonal(ctx) });
 
   // 各信息源并发抓取,互不阻塞
   const results = await Promise.all(runners.map(async (r) => ({ name: r.name, res: await safeRun(r.run) })));
@@ -277,8 +284,11 @@ async function main(): Promise<void> {
   const rss = ((byName.get('rss')?.data as RssSection | undefined)?.items ?? [])
     .slice(0, limits.maxRssItems ?? 10);
   const hotItems = (byName.get('baiduhot')?.data as BaiduHotSection | undefined)?.items ?? [];
+  const biliHot = (byName.get('bilibili')?.data as BiliHotSection | undefined)?.items ?? [];
+  const personal = (byName.get('personal')?.data as PersonalSection | undefined) ?? { anniversaries: [], certs: [] };
   const discoveries = (byName.get('github')?.data as GithubSection | undefined)?.discoveries ?? [];
   const hotLimited = limits.maxHotItems ? hotItems.slice(0, limits.maxHotItems) : hotItems;
+  const biliLimited = limits.maxBiliItems ? biliHot.slice(0, limits.maxBiliItems) : biliHot;
 
   const greetingBase = kind === 'morning' ? '早上好' : kind === 'evening' ? '晚上好' : '你好';
   const reportCtx: ReportContext = {
@@ -292,13 +302,18 @@ async function main(): Promise<void> {
     discoveries,
     rss,
     hotItems: hotLimited,
+    biliHot: biliLimited,
+    personal,
     failures,
     hasContent: Boolean(weather)
       || calendar.length > 0
       || releases.length > 0
       || discoveries.length > 0
       || rss.length > 0
-      || hotLimited.length > 0,
+      || hotLimited.length > 0
+      || biliLimited.length > 0
+      || personal.anniversaries.length > 0
+      || personal.certs.length > 0,
   };
 
   const msg = renderReport(reportCtx);

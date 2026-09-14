@@ -17,6 +17,7 @@ export function defaultConfig(): BotConfig {
       locationName: '北京',
       latitude: 39.9042,
       longitude: 116.4074,
+      airQuality: true,
     },
     calendar: { enabled: true },
     github: {
@@ -45,6 +46,18 @@ export function defaultConfig(): BotConfig {
     baiduhot: {
       enabled: true,
       maxItems: 10,
+    },
+    bilibili: {
+      enabled: false,
+      maxItems: 10,
+    },
+    personal: {
+      enabled: false,
+      anniversaries: [],
+      anniversaryWithinDays: 30,
+      certChecks: [],
+      certWarnDays: 30,
+      certTimeoutMs: 8000,
     },
     notify: {},
     limits: {

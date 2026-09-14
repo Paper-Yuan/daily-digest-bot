@@ -24,6 +24,7 @@ import type {
   GithubDiscovery,
   GithubRelease,
   HotSearchItem,
+  PersonalSection,
   ReportContext,
   ReportFailure,
   ReportKind,
@@ -537,6 +538,12 @@ function fmtStars(n: number): string {
   return `${Math.round(n)}`;
 }
 
+/** 热搜热度值紧凑格式:1226970 → 122.7万,8600 → 8600 */
+function fmtHeat(n: number): string {
+  if (n >= 10_000) return `${(n / 10_000).toFixed(1).replace(/\.0$/, '')}万`;
+  return `${Math.round(n)}`;
+}
+
 function buildFailureCard(m: CanvasCtx, failures: ReportFailure[], contentW: number): Card {
   return buildCard(
     m,
@@ -563,9 +570,33 @@ function buildWeatherCard(m: CanvasCtx, w: WeatherInfo, theme: string, contentW:
   let main = `${desc} ｜ ${Math.round(w.tempMin)} ~ ${Math.round(w.tempMax)}°C`;
   if (w.tempNow !== undefined) main += `（当前 ${w.tempNow}°C）`;
   lines.push({ text: main, style: 'body', maxLines: 2 });
-  if (w.precipitationProb !== undefined) {
-    lines.push({ text: `降水概率 ${w.precipitationProb}%`, style: 'muted', color: COLORS.muted, maxLines: 1 });
+  // 增强信息用 muted 小一号:空气/降水/日出日落/穿衣,逐行只在有数据时出现
+  const muted = (text: string): LineSpec => ({
+    text,
+    style: 'muted',
+    color: COLORS.muted,
+    maxLines: 2,
+  });
+  if (w.air) {
+    const pm = w.air.pm10 !== undefined
+      ? `PM2.5 ${w.air.pm25} · PM10 ${w.air.pm10}`
+      : `PM2.5 ${w.air.pm25}`;
+    lines.push(muted(`空气 ${w.air.level}（${pm}）`));
   }
+  if (w.rainWindows && w.rainWindows.length > 0) {
+    const parts = w.rainWindows
+      .slice(0, 2)
+      .map((r) => `${r.start}~${r.end} 最高 ${r.maxProb}%`);
+    lines.push(muted(`有雨时段:${parts.join('、')}`));
+  } else if (w.precipitationProb !== undefined) {
+    lines.push(muted(`降水概率 ${w.precipitationProb}%`));
+  }
+  const sun: string[] = [];
+  if (w.sunrise) sun.push(`日出 ${w.sunrise}`);
+  if (w.sunset) sun.push(`日落 ${w.sunset}`);
+  if (w.uvIndexMax !== undefined) sun.push(`紫外线 ${w.uvIndexMax}`);
+  if (sun.length > 0) lines.push(muted(sun.join(' · ')));
+  if (w.dressAdvice) lines.push(muted(w.dressAdvice));
   for (const wn of w.warnings ?? []) {
     const head = clean(wn.title || wn.level);
     const detail = clean(wn.detail);
@@ -612,6 +643,42 @@ function buildHotCard(m: CanvasCtx, items: HotSearchItem[], theme: string, conte
     },
     contentW,
   );
+}
+
+function buildBiliHotCard(m: CanvasCtx, items: HotSearchItem[], theme: string, contentW: number): Card {
+  return buildCard(
+    m,
+    {
+      title: `B 站热搜 · ${items.length} 条`,
+      accent: theme,
+      lines: items.map((it) => {
+        const heat = it.heat !== undefined ? `  ${fmtHeat(it.heat)}` : '';
+        return {
+          text: `${it.rank}. ${it.isNew ? '[新] ' : ''}${clean(it.word)}${heat}`,
+          style: 'body' as StyleKey,
+          maxLines: 2,
+        };
+      }),
+    },
+    contentW,
+  );
+}
+
+function buildPersonalCard(m: CanvasCtx, p: PersonalSection, theme: string, contentW: number): Card {
+  const lines: LineSpec[] = [];
+  for (const a of p.anniversaries) {
+    const when = a.daysLeft === 0 ? '就是今天' : `还有 ${a.daysLeft} 天`;
+    const years = a.years !== undefined ? ` · ${a.years} 周年` : '';
+    lines.push({ text: `${clean(a.name)} ${when}（${a.nextDate}${years}）`, style: 'body', maxLines: 1 });
+  }
+  for (const c of p.certs) {
+    const when = c.daysLeft < 0
+      ? `已过期 ${-c.daysLeft} 天`
+      : c.daysLeft === 0 ? '今天到期' : `还有 ${c.daysLeft} 天到期`;
+    lines.push({ text: `${clean(c.name)} 证书${when}（${c.validTo}）`, style: 'body', color: '#c92a2a', maxLines: 1 });
+  }
+  const count = p.anniversaries.length + p.certs.length;
+  return buildCard(m, { title: `提醒 · ${count} 条`, accent: theme, lines }, contentW);
 }
 
 function buildReleaseCard(m: CanvasCtx, releases: GithubRelease[], theme: string, contentW: number): Card {
@@ -732,6 +799,10 @@ function renderSync(mod: CanvasModule, ctx: ReportContext, width: number): Buffe
     if (ctx.weather) add(() => buildWeatherCard(probe, ctx.weather as WeatherInfo, theme, contentW));
     if (ctx.calendar?.length) add(() => buildCalendarCard(probe, ctx.calendar, theme, contentW));
     if (ctx.hotItems?.length) add(() => buildHotCard(probe, ctx.hotItems, theme, contentW));
+    if (ctx.biliHot?.length) add(() => buildBiliHotCard(probe, ctx.biliHot, theme, contentW));
+    if (ctx.personal && (ctx.personal.anniversaries.length > 0 || ctx.personal.certs.length > 0)) {
+      add(() => buildPersonalCard(probe, ctx.personal, theme, contentW));
+    }
     if (ctx.releases?.length) add(() => buildReleaseCard(probe, ctx.releases, theme, contentW));
     if (ctx.discoveries?.length) add(() => buildDiscoveryCard(probe, ctx.discoveries, theme, contentW));
     if (ctx.rss?.length) add(() => buildRssCard(probe, ctx.rss, theme, contentW));

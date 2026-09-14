@@ -15,6 +15,8 @@ function baseCtx(over: Partial<ReportContext> = {}): ReportContext {
     discoveries: [],
     rss: [],
     hotItems: [],
+    biliHot: [],
+    personal: { anniversaries: [], certs: [] },
     failures: [],
     hasContent: false,
     ...over,
@@ -183,5 +185,171 @@ describe('renderReport', () => {
 
   it('escapeHtml 行为', () => {
     expect(escapeHtml('a&b<c>d')).toBe('a&amp;b&lt;c&gt;d');
+  });
+});
+
+/* ---------------- 新增区块:天气增强 / B 站热搜 / 个人提醒 ---------------- */
+
+describe('天气增强行', () => {
+  const weatherBase = {
+    locationName: '示例城市', description: '多云', emoji: '☁️',
+    tempMin: 20, tempMax: 29, warnings: [], source: 'open-meteo',
+  };
+
+  it('空气质量:带 PM2.5/PM10 与等级词', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      weather: { ...weatherBase, air: { pm25: 68.2, pm10: 95.4, level: '良' } },
+    }));
+    expect(text).toContain('😷 空气 良（PM2.5 68.2 · PM10 95.4）');
+  });
+
+  it('只有 PM2.5 时不显示 PM10 段', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      weather: { ...weatherBase, air: { pm25: 12, level: '优' } },
+    }));
+    expect(text).toContain('😷 空气 优（PM2.5 12）');
+    expect(text).not.toContain('PM10');
+  });
+
+  it('有逐小时时段时优先展示时段,不再单列概率', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      weather: {
+        ...weatherBase,
+        precipitationProb: 60,
+        rainWindows: [
+          { start: '14:00', end: '16:00', maxProb: 75 },
+          { start: '20:00', end: '20:00', maxProb: 40 },
+        ],
+      },
+    }));
+    expect(text).toContain('🌧 有雨时段:14:00~16:00 最高 75%、20:00~20:00 最高 40%');
+    expect(text).not.toContain('💧 降水概率');
+  });
+
+  it('没有时段数据时退回原来的降水概率行', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      weather: { ...weatherBase, precipitationProb: 40 },
+    }));
+    expect(text).toContain('💧 降水概率 40%');
+    expect(text).not.toContain('有雨时段');
+  });
+
+  it('日出日落与紫外线合并成一行', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      weather: { ...weatherBase, sunrise: '05:54', sunset: '18:17', uvIndexMax: 5.7 },
+    }));
+    expect(text).toContain('🌅 日出 05:54 · 日落 18:17 · 紫外线 5.7');
+  });
+
+  it('穿衣建议单独一行', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      weather: { ...weatherBase, dressAdvice: '舒适,长袖或薄外套' },
+    }));
+    expect(text).toContain('👕 舒适,长袖或薄外套');
+  });
+
+  it('增强字段全部缺失时,天气区块保持原样(不出现空行)', () => {
+    const { text } = renderReport(baseCtx({ hasContent: true, weather: weatherBase }));
+    expect(text).not.toContain('😷');
+    expect(text).not.toContain('日出'); // 不要断言 🌅:天气区块标题自带的 🌤 会误伤
+    expect(text).not.toContain('👕');
+    expect(text).not.toContain('有雨时段');
+  });
+});
+
+describe('B 站热搜区块', () => {
+  it('独立成块,带热度值与 [新] 标记', () => {
+    const { text, html } = renderReport(baseCtx({
+      hasContent: true,
+      biliHot: [
+        { rank: 1, word: '长庚伴月', heat: 1226970, isNew: true },
+        { rank: 2, word: 'LPL总决赛', heat: 8600 },
+      ],
+    }));
+    expect(text).toContain('▌📺 B 站热搜 · 2 条');
+    expect(text).toContain('1. 🆕 长庚伴月  🔥122.7万');
+    expect(text).toContain('2. LPL总决赛  🔥8600');
+    expect(html).toContain('<b>📺 B 站热搜 · 2 条</b>');
+  });
+
+  it('无热度值时不显示热度段', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      biliHot: [{ rank: 1, word: '某词条' }],
+    }));
+    expect(text).toContain('1. 某词条');
+    expect(text).not.toContain('🔥');
+  });
+
+  it('百度热搜与 B 站热搜是两个独立区块', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      hotItems: [{ rank: 1, word: '百度词条' }],
+      biliHot: [{ rank: 1, word: 'B站词条' }],
+    }));
+    expect(text).toContain('▌🔥 百度热搜 · 1 条');
+    expect(text).toContain('▌📺 B 站热搜 · 1 条');
+  });
+});
+
+describe('个人提醒区块', () => {
+  it('纪念日:今天 / 还有 N 天 / 周年', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      personal: {
+        anniversaries: [
+          { name: '生日', date: '1998-09-15', daysLeft: 0, nextDate: '2026-09-15', years: 28 },
+          { name: '结婚纪念', date: '2020-10-10', daysLeft: 25, nextDate: '2026-10-10', years: 6 },
+        ],
+        certs: [],
+      },
+    }));
+    expect(text).toContain('▌🎯 提醒 · 2 条');
+    expect(text).toContain('🎂 生日 就是今天（2026-09-15 · 28 周年）');
+    expect(text).toContain('🎂 结婚纪念 还有 25 天（2026-10-10 · 6 周年）');
+  });
+
+  it('首年不显示周年数', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      personal: {
+        anniversaries: [{ name: '入职', date: '2026-09-20', daysLeft: 5, nextDate: '2026-09-20' }],
+        certs: [],
+      },
+    }));
+    expect(text).toContain('🎂 入职 还有 5 天（2026-09-20）');
+    expect(text).not.toContain('周年');
+  });
+
+  it('证书:正常 / 今天到期 / 已过期三种措辞', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      personal: {
+        anniversaries: [],
+        certs: [
+          { name: '主站', host: 'a.com', validTo: '2026-10-10', daysLeft: 25 },
+          { name: '博客', host: 'b.com', validTo: '2026-09-15', daysLeft: 0 },
+          { name: '旧站', host: 'c.com', validTo: '2026-09-10', daysLeft: -5 },
+        ],
+      },
+    }));
+    expect(text).toContain('🔒 主站 证书还有 25 天到期（2026-10-10）');
+    expect(text).toContain('🔒 博客 证书今天到期（2026-09-15）');
+    expect(text).toContain('🔒 旧站 证书已过期 5 天（2026-09-10）');
+  });
+
+  it('两块都为空时不渲染该区块', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      hotItems: [{ rank: 1, word: 'x' }],
+      personal: { anniversaries: [], certs: [] },
+    }));
+    expect(text).not.toContain('🎯');
   });
 });

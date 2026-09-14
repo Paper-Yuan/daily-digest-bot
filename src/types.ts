@@ -9,7 +9,7 @@
  *  - 模块内部对单个子源(单个 RSS 源/单个仓库)的失败只记入 warnings,不算整体失败。
  */
 
-export type ModuleName = 'weather' | 'calendar' | 'github' | 'rss' | 'baiduhot';
+export type ModuleName = 'weather' | 'calendar' | 'github' | 'rss' | 'baiduhot' | 'bilibili' | 'personal';
 
 /** 报告类型:早报 / 晚报 / 随时快报 */
 export type ReportKind = 'morning' | 'evening' | 'quick';
@@ -32,6 +32,11 @@ export interface FetchContext {
   now: Date;
   /** force=true:忽略去重状态,把当前可见的内容全部输出(用于预览) */
   force?: boolean;
+  /**
+   * 报告类型。模块可据此调整"当下是否还说得出":例如晚报不必再提醒
+   * 今天上午已经下过的雨。缺省按早报处理。
+   */
+  reportKind?: ReportKind;
 }
 
 /* ---------------- 天气 ---------------- */
@@ -44,6 +49,32 @@ export interface WeatherWarning {
   end?: string;
 }
 
+/**
+ * 空气质量。
+ * 只给 PM2.5/PM10 浓度与等级词,不给"AQI 数字"——真正的 AQI 要取各项污染物
+ * 的最大 IAQI,仅凭 PM2.5 算出来的数会偏低,不如直接报浓度 + 等级诚实。
+ */
+export interface AirQuality {
+  /** PM2.5 浓度 μg/m³ */
+  pm25: number;
+  /** PM10 浓度 μg/m³(可选;沙尘天比 PM2.5 更有参考价值) */
+  pm10?: number;
+  /** 等级词:优 / 良 / 轻度污染 / 中度污染 / 重度污染 / 严重污染 */
+  level: string;
+}
+
+/** 一段连续的降水时间(相邻小时合并,避免逐小时刷屏) */
+export interface RainWindow {
+  /** 起始时刻,本地 HH:MM */
+  start: string;
+  /** 结束时刻,本地 HH:MM(含该小时) */
+  end: string;
+  /** 时段内最高降水概率 0-100 */
+  maxProb: number;
+  /** 时段内累计降水量 mm(可选) */
+  mm?: number;
+}
+
 export interface WeatherInfo {
   locationName: string;
   description: string;
@@ -54,6 +85,18 @@ export interface WeatherInfo {
   tempNow?: number;
   /** 降水概率 0-100(可选) */
   precipitationProb?: number;
+  /** 日出时刻,本地 HH:MM(可选) */
+  sunrise?: string;
+  /** 日落时刻,本地 HH:MM(可选) */
+  sunset?: string;
+  /** 当日紫外线指数最大值(可选) */
+  uvIndexMax?: number;
+  /** 空气质量(可选;取不到时不展示) */
+  air?: AirQuality;
+  /** 今日尚未过去的降水时段(可选;晚报只显示之后的) */
+  rainWindows?: RainWindow[];
+  /** 穿衣建议(可选;由温度推导,不联网) */
+  dressAdvice?: string;
   warnings: WeatherWarning[];
   source: string;
 }
@@ -154,10 +197,46 @@ export interface HotSearchItem {
   url?: string;
   /** 相比上次运行是否新上榜 */
   isNew?: boolean;
+  /** 热度值(部分榜单接口提供,如 B 站) */
+  heat?: number;
 }
 
 export interface BaiduHotSection {
   items: HotSearchItem[];
+}
+
+export interface BiliHotSection {
+  items: HotSearchItem[];
+}
+
+/* ---------------- 个人向提醒 ---------------- */
+
+export interface AnniversaryInfo {
+  name: string;
+  /** 配置里的原始日期 YYYY-MM-DD */
+  date: string;
+  /** 距下次发生还有几天(0 = 就是今天) */
+  daysLeft: number;
+  /** 下次发生的日期 YYYY-MM-DD */
+  nextDate: string;
+  /** 第几周年(已过首年时给出,如 "1 周年") */
+  years?: number;
+}
+
+export interface CertInfo {
+  name: string;
+  host: string;
+  /** 证书到期日 YYYY-MM-DD */
+  validTo: string;
+  /** 剩余天数(负数表示已过期) */
+  daysLeft: number;
+}
+
+export interface PersonalSection {
+  /** 临近的纪念日/生日 */
+  anniversaries: AnniversaryInfo[];
+  /** 临近到期的证书 */
+  certs: CertInfo[];
 }
 
 export type SectionPayload =
@@ -165,7 +244,9 @@ export type SectionPayload =
   | CalendarSection
   | GithubSection
   | RssSection
-  | BaiduHotSection;
+  | BaiduHotSection
+  | BiliHotSection
+  | PersonalSection;
 
 /* ---------------- 配置 ---------------- */
 
@@ -176,6 +257,8 @@ export interface WeatherConfig {
   longitude: number;
   /** 可选:接入和风天气预警,key 走环境变量 QWEATHER_API_KEY */
   qweather?: { host?: string; locationId: string };
+  /** 空气质量(Open-Meteo,免费无需 key);默认开启,设为 false 可关 */
+  airQuality?: boolean;
 }
 
 export interface IcsSource {
@@ -267,6 +350,40 @@ export interface BaiduHotConfig {
   maxItems?: number;
 }
 
+export interface BiliHotConfig {
+  enabled?: boolean;
+  /** 展示条数,默认 10 */
+  maxItems?: number;
+}
+
+export interface AnniversaryConfig {
+  /** 显示名,如 "生日" */
+  name: string;
+  /** 日期 YYYY-MM-DD,每年重复 */
+  date: string;
+}
+
+export interface CertCheckConfig {
+  name: string;
+  host: string;
+  /** 默认 443 */
+  port?: number;
+}
+
+export interface PersonalConfig {
+  enabled?: boolean;
+  /** 纪念日/生日(每年重复) */
+  anniversaries?: AnniversaryConfig[];
+  /** 只在距今天数 <= 该值时展示,默认 30(避免"还有 300 天"这种噪音) */
+  anniversaryWithinDays?: number;
+  /** 域名证书到期检查 */
+  certChecks?: CertCheckConfig[];
+  /** 只在剩余天数 <= 该值时展示,默认 30 */
+  certWarnDays?: number;
+  /** 单次 TLS 探测超时毫秒数,默认 8000 */
+  certTimeoutMs?: number;
+}
+
 export interface NotifyConfig {
   /** enabled 缺省 = 自动:配了环境变量就发,没配就静默跳过;true = 强制启用,缺环境变量视为故障 */
   telegram?: { enabled?: boolean };
@@ -279,6 +396,8 @@ export interface LimitsConfig {
   maxRssItems?: number;
   /** 热搜条数上限(覆盖 baiduhot.maxItems) */
   maxHotItems?: number;
+  /** B 站热搜条数上限(覆盖 bilibili.maxItems) */
+  maxBiliItems?: number;
   /** 摘要截断字符数 */
   summaryChars?: number;
 }
@@ -324,6 +443,10 @@ export interface BotConfig {
   github: GithubConfig;
   rss: RssConfig;
   baiduhot: BaiduHotConfig;
+  /** B 站热搜榜单(可选) */
+  bilibili?: BiliHotConfig;
+  /** 个人向提醒:纪念日倒计时 / 域名证书到期 */
+  personal?: PersonalConfig;
   notify: NotifyConfig;
   limits: LimitsConfig;
   /** 发布时间锁定(早报/晚报目标时刻与当日去重锁) */
@@ -360,6 +483,8 @@ export interface BotState {
   rss?: { feeds?: Record<string, RssFeedState> };
   /** 百度热搜:已见过的词条(用于标记"新上榜") */
   baidu?: { seen?: string[] };
+  /** B 站热搜:已见过的词条(用于标记"新上榜") */
+  bilibili?: { seen?: string[] };
   /** 发布锁:各时段最近一次成功发送的本地日期(YYYY-MM-DD) */
   sends?: { morning?: string; evening?: string };
 }
@@ -385,6 +510,10 @@ export interface ReportContext {
   discoveries: GithubDiscovery[];
   rss: RssItem[];
   hotItems: HotSearchItem[];
+  /** B 站热搜(B 站榜单,与百度热搜分开成块) */
+  biliHot: HotSearchItem[];
+  /** 个人向提醒(纪念日倒计时 / 证书到期) */
+  personal: PersonalSection;
   failures: ReportFailure[];
   /** 是否有任何实质内容(决定渲染"今日无事"版) */
   hasContent: boolean;

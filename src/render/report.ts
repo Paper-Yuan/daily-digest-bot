@@ -17,6 +17,7 @@ import type {
   GithubDiscovery,
   GithubRelease,
   HotSearchItem,
+  PersonalSection,
   ReportContext,
   ReportFailure,
   RssItem,
@@ -44,6 +45,12 @@ function textTitle(emoji: string, name: string, count: number): string {
 function fmtStars(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   return `${n}`;
+}
+
+/** 热搜热度值紧凑格式:1226970 → 122.7万,8600 → 8600 */
+function fmtHeat(n: number): string {
+  if (n >= 10_000) return `${(n / 10_000).toFixed(1).replace(/\.0$/, '')}万`;
+  return `${Math.round(n)}`;
 }
 
 /* ---------------- 头部 ---------------- */
@@ -87,12 +94,44 @@ function warningLine(wn: WeatherWarning): string {
   return head && detail ? `🚨 ${head}：${detail}` : `🚨 ${head || detail}`;
 }
 
+/**
+ * 天气增强行的组装:空气质量 / 日出日落 / 紫外线 / 降水时段 / 穿衣建议。
+ * 返回行数组,文本版与 html 版共用(它们内容一致,只是 html 需要转义)。
+ * 每项都只在有数据时出现 —— 取不到就不显示,不留空占位。
+ */
+function weatherExtraLines(w: WeatherInfo): string[] {
+  const lines: string[] = [];
+  if (w.air) {
+    const pm = w.air.pm10 !== undefined
+      ? `PM2.5 ${w.air.pm25} · PM10 ${w.air.pm10}`
+      : `PM2.5 ${w.air.pm25}`;
+    lines.push(`😷 空气 ${w.air.level}（${pm}）`);
+  }
+  if (w.rainWindows && w.rainWindows.length > 0) {
+    // 只列前两段,避免雨天时段太多把报告撑长
+    const parts = w.rainWindows
+      .slice(0, 2)
+      .map((r) => `${r.start}~${r.end} 最高 ${r.maxProb}%`);
+    lines.push(`🌧 有雨时段:${parts.join('、')}`);
+  } else if (w.precipitationProb !== undefined) {
+    // 没有逐小时数据时退回原来的概率展示
+    lines.push(`💧 降水概率 ${w.precipitationProb}%`);
+  }
+  const sun: string[] = [];
+  if (w.sunrise) sun.push(`日出 ${w.sunrise}`);
+  if (w.sunset) sun.push(`日落 ${w.sunset}`);
+  if (w.uvIndexMax !== undefined) sun.push(`紫外线 ${w.uvIndexMax}`);
+  if (sun.length > 0) lines.push(`🌅 ${sun.join(' · ')}`);
+  if (w.dressAdvice) lines.push(`👕 ${w.dressAdvice}`);
+  return lines;
+}
+
 function weatherBlock(w: WeatherInfo): Block {
   const text = [`▌🌤 天气 · ${w.locationName}`, weatherLine(w)];
   const html = [`<b>🌤 天气 · ${escapeHtml(w.locationName)}</b>`, escapeHtml(weatherLine(w))];
-  if (w.precipitationProb !== undefined) {
-    text.push(`💧 降水概率 ${w.precipitationProb}%`);
-    html.push(`💧 降水概率 ${w.precipitationProb}%`);
+  for (const line of weatherExtraLines(w)) {
+    text.push(line);
+    html.push(escapeHtml(line));
   }
   for (const wn of w.warnings) {
     text.push(warningLine(wn));
@@ -141,6 +180,46 @@ function hotSearchBlock(items: HotSearchItem[]): Block {
     const safeWord = escapeHtml(it.word);
     const wordHtml = it.url ? `<a href="${escapeHtml(it.url)}">${safeWord}</a>` : safeWord;
     html.push(`${it.rank}. ${flag}${wordHtml}`);
+  }
+  return { text, html };
+}
+
+/* ---------------- B 站热搜 ---------------- */
+
+function biliHotBlock(items: HotSearchItem[]): Block {
+  const title = textTitle('📺', 'B 站热搜', items.length);
+  const text = [title];
+  const html = [`<b>📺 B 站热搜 · ${items.length} 条</b>`];
+  for (const it of items) {
+    const flag = it.isNew ? '🆕 ' : '';
+    // 热度值用 k 压缩(1226970 -> 122.7万 太长,统一 w 单位)
+    const heat = it.heat !== undefined ? `  🔥${fmtHeat(it.heat)}` : '';
+    text.push(`${it.rank}. ${flag}${it.word}${heat}`);
+    const safeWord = escapeHtml(it.word);
+    html.push(`${it.rank}. ${flag}${safeWord}${escapeHtml(heat)}`);
+  }
+  return { text, html };
+}
+
+/* ---------------- 个人提醒(纪念日 / 证书) ---------------- */
+
+function personalBlock(p: PersonalSection): Block {
+  const count = p.anniversaries.length + p.certs.length;
+  const title = textTitle('🎯', '提醒', count);
+  const text = [title];
+  const html = [`<b>🎯 提醒 · ${count} 条</b>`];
+  for (const a of p.anniversaries) {
+    const when = a.daysLeft === 0 ? '就是今天' : `还有 ${a.daysLeft} 天`;
+    const years = a.years !== undefined ? ` · ${a.years} 周年` : '';
+    text.push(`🎂 ${a.name} ${when}（${a.nextDate}${years}）`);
+    html.push(`🎂 ${escapeHtml(a.name)} ${escapeHtml(when)}（${escapeHtml(a.nextDate + years)}）`);
+  }
+  for (const c of p.certs) {
+    const when = c.daysLeft < 0
+      ? `已过期 ${-c.daysLeft} 天`
+      : c.daysLeft === 0 ? '今天到期' : `还有 ${c.daysLeft} 天到期`;
+    text.push(`🔒 ${c.name} 证书${when}（${c.validTo}）`);
+    html.push(`🔒 ${escapeHtml(c.name)} 证书${escapeHtml(when)}（${escapeHtml(c.validTo)}）`);
   }
   return { text, html };
 }
@@ -229,6 +308,10 @@ export function renderReport(ctx: ReportContext): { text: string; html: string }
   if (ctx.weather) blocks.push(weatherBlock(ctx.weather));
   if (ctx.calendar.length > 0) blocks.push(calendarBlock(ctx.calendar));
   if (ctx.hotItems.length > 0) blocks.push(hotSearchBlock(ctx.hotItems));
+  if (ctx.biliHot.length > 0) blocks.push(biliHotBlock(ctx.biliHot));
+  if (ctx.personal.anniversaries.length > 0 || ctx.personal.certs.length > 0) {
+    blocks.push(personalBlock(ctx.personal));
+  }
   if (ctx.releases.length > 0) blocks.push(releaseBlock(ctx.releases));
   if (ctx.discoveries.length > 0) blocks.push(discoveryBlock(ctx.discoveries));
   if (ctx.rss.length > 0) blocks.push(rssBlock(ctx.rss));

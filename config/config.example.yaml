@@ -17,6 +17,7 @@ weather:
   locationName: 北京             # 仅用于展示
   latitude: 39.9042              # Open-Meteo 免费、无需 key
   longitude: 116.4074
+  airQuality: true               # 空气质量(PM2.5/PM10 + 等级);同一厂商免费接口,不需要 key
   # 可选:接入和风天气预警(免费订阅 host 用 devapi.qweather.com,付费用 api.qweather.com)
   # qweather:
   #   host: devapi.qweather.com
@@ -72,6 +73,24 @@ rss:
 baiduhot:
   enabled: true
   maxItems: 10                   # 每次推送当前热搜榜 Top 10,新上榜词条带 🆕
+
+bilibili:
+  enabled: false                 # B 站热搜(与百度热搜分开成块)
+  maxItems: 10
+
+# 个人向提醒:只在"临近"时才出现在报告里,避免天天刷"还有 300 天"。
+personal:
+  enabled: false
+  anniversaries: []              # 纪念日/生日(每年重复,可配多个)
+    # - name: 生日
+    #   date: "1998-03-15"       # YYYY-MM-DD
+  anniversaryWithinDays: 30      # 距今天数 <= 该值才展示
+  certChecks: []                 # 自建域名证书到期探测(留空则不探测)
+    # - name: 我的站点
+    #   host: example.com
+    #   port: 443                # 默认 443
+  certWarnDays: 30               # 剩余天数 <= 该值才提醒
+  certTimeoutMs: 8000            # 单次 TLS 探测超时
 
 notify:
   # enabled 缺省 = 自动:配了环境变量就发送,没配就跳过

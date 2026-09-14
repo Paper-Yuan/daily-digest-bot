@@ -47,6 +47,8 @@ function baseCtx(over: Partial<ReportContext> = {}): ReportContext {
     discoveries: [],
     rss: [],
     hotItems: [],
+    biliHot: [],
+    personal: { anniversaries: [], certs: [] },
     failures: [],
     hasContent: false,
     ...over,
