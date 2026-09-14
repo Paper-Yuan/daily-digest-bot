@@ -51,6 +51,26 @@ export function defaultConfig(): BotConfig {
       maxRssItems: 10,
       summaryChars: 100,
     },
+    schedule: {
+      morning: '08:00',
+      evening: '21:00',
+      lockTime: true,
+      maxWaitMinutes: 30,
+    },
+    image: {
+      enabled: true,
+      width: 900,
+    },
+    quick: {
+      enabled: true,
+      // 快报是"现在有什么"的即时快照,条数比早晚报精简
+      limits: {
+        maxHotItems: 5,
+        maxRssItems: 3,
+        maxReleases: 3,
+        maxCalendarEvents: 5,
+      },
+    },
     statePath: DEFAULT_STATE_PATH,
   };
 }

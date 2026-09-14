@@ -35,7 +35,14 @@ function feishuSign(secret: string, timestamp: string): string {
 export async function sendFeishu(
   msg: { text: string },
   opts: { webhookUrl: string; secret?: string },
+  image?: Buffer | null,
 ): Promise<void> {
+  // 飞书自定义机器人 webhook 只接受文本/富文本,不支持直接上传图片
+  // (上传图片需要企业发展示应用凭证走 image API,超出 webhook 能力)。
+  // 因此这里忽略图片,报告以文本形式送达。
+  if (image && image.length > 0) {
+    console.error('[notify:feishu] 飞书 webhook 不支持图片,本次仅发送文本报告');
+  }
   // chunkText 对不超限的文本原样返回单块,无需单独判断
   for (const piece of chunkText(msg.text, MAX_CHARS)) {
     // 时间戳与签名按条实时生成,避免多块发送时签名过期

@@ -49,8 +49,8 @@ function fmtStars(n: number): string {
 /* ---------------- 头部 ---------------- */
 
 function headerBlock(ctx: ReportContext): Block {
-  const emoji = ctx.reportKind === 'evening' ? '🌙' : '🌅';
-  const title = ctx.reportKind === 'evening' ? '晚报' : '早报';
+  const emoji = ctx.reportKind === 'evening' ? '🌙' : ctx.reportKind === 'quick' ? '⚡' : '🌅';
+  const title = ctx.reportKind === 'evening' ? '晚报' : ctx.reportKind === 'quick' ? '快报' : '早报';
   const heading = `${emoji} ${title} · ${ctx.dateLabel} ${ctx.timeLabel}`;
   return {
     text: [heading, `${ctx.greeting}！`, '────────────────────'],

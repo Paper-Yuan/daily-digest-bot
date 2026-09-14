@@ -140,3 +140,31 @@ export async function httpPostJson<T>(
   const text = await res.text();
   return (text ? JSON.parse(text) : ({} as T)) as T;
 }
+
+/**
+ * POST multipart/form-data(用于上传图片等二进制内容)。
+ * 刻意不手写 content-type:必须交给 fetch 自动附加 boundary,
+ * 手动指定会导致服务端解析失败。超时给得更宽(图片上传较慢),重试策略与其它方法一致。
+ */
+export async function httpPostForm<T>(
+  url: string,
+  form: FormData,
+  opts: HttpOptions = {},
+): Promise<T> {
+  const runtime: RetryRuntime = {
+    timeoutMs: opts.timeoutMs ?? 30_000,
+    retries: opts.retries ?? DEFAULT_RETRIES,
+    backoffBaseMs: opts.backoffBaseMs ?? DEFAULT_BACKOFF,
+  };
+  const res = await fetchWithRetry(
+    url,
+    {
+      method: 'POST',
+      headers: { ...DEFAULT_HEADERS, ...(opts.headers ?? {}), accept: 'application/json' },
+      body: form,
+    },
+    runtime,
+  );
+  const text = await res.text();
+  return (text ? JSON.parse(text) : ({} as T)) as T;
+}

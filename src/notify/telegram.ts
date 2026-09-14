@@ -9,7 +9,7 @@
  *    改用纯 text 版本(不带 parse_mode)整份重发一次,仍失败才抛错。
  */
 
-import { httpPostJson } from '../utils/http';
+import { httpPostForm, httpPostJson } from '../utils/http';
 
 /** sendMessage 返回体(只取关心的字段) */
 interface TelegramResponse {
@@ -83,10 +83,41 @@ async function postMessage(
   );
 }
 
+/**
+ * 发送图片(sendPhoto,multipart)。
+ * HTTP 层失败交给 httpPostForm 重试;返回体 ok=false 时抛错,由调用方决定是否降级。
+ */
+async function postPhoto(
+  opts: { botToken: string; chatId: string },
+  image: Buffer,
+): Promise<TelegramResponse> {
+  const form = new FormData();
+  form.append('chat_id', opts.chatId);
+  form.append('photo', new Blob([image], { type: 'image/png' }), 'report.png');
+  return httpPostForm<TelegramResponse>(
+    `https://api.telegram.org/bot${opts.botToken}/sendPhoto`,
+    form,
+  );
+}
+
 export async function sendTelegram(
   msg: { text: string; html: string },
   opts: { botToken: string; chatId: string },
+  image?: Buffer | null,
 ): Promise<void> {
+  // 图片先发:消息按序到达,用户先看到战报图,再看到可复制的文本明细。
+  // 图片失败不影响文本推送(降级为纯文本报告),仅在日志里说明。
+  if (image && image.length > 0) {
+    try {
+      const res = await postPhoto(opts, image);
+      if (res.ok !== true) {
+        console.error(`[notify:telegram] 图片发送失败,已降级为仅文本: ${res.description ?? '未知原因'}`);
+      }
+    } catch (err) {
+      console.error(`[notify:telegram] 图片发送异常,已降级为仅文本: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // 第一遍:html 版逐块按序发送
   let parseError = '';
   for (const piece of chunkText(msg.html, HTML_CHUNK_MAX)) {

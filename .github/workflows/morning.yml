@@ -1,31 +1,42 @@
-# 每日早报 + 晚报:GitHub Actions 定时触发,零服务器成本。
-# 注意:cron 用的是 UTC 时间,北京时间 = UTC + 8。
-#   0 0 * * *   = 北京时间每天 08:00(早报)
-#   0 13 * * *  = 北京时间每天 21:00(晚报)
-# 报告是早报还是晚报由程序按运行时刻的本地时间自动判定。
-# 顺延说明:GitHub Actions 定时任务可能延迟 0~30 分钟,属正常现象。
+# 每日早报 + 晚报 + 随时快报:GitHub Actions 定时触发,零服务器成本。
+#
+# 发布时间锁定:cron 设在目标时刻「之前」,进程启动后等到目标时刻再发。
+# GitHub 的定时任务只晚不早(高峰期可能延迟 20~40 分钟),提前启动正好把延迟吃掉,
+# 因此正常情况下你会在 08:00 / 21:00 准点收到,而不是随机延迟后的时间。
+#   UTC 23:45 = 北京 07:45 启动 → 锁定 08:00 发布(早报)
+#   UTC 12:45 = 北京 20:45 启动 → 锁定 21:00 发布(晚报)
+# 代价:等待会占用 Actions 分钟数(私有仓库免费额度 2000 分钟/月)。
+#      想省额度可把 cron 推后、或设 schedule.lockTime: false 退化为"触发即发"。
 name: 每日早晚报
 
 on:
   schedule:
-    - cron: "0 0 * * *"  # 北京时间 08:00 早报
-    - cron: "0 13 * * *" # 北京时间 21:00 晚报
-  workflow_dispatch: # 支持手动触发(可在 Actions 页面勾选 dryRun / force)
+    - cron: "45 23 * * *" # 北京 07:45 启动 → 08:00 早报
+    - cron: "45 12 * * *" # 北京 20:45 启动 → 21:00 晚报
+  workflow_dispatch: # 手动触发:可选模式,支持预览
     inputs:
+      mode:
+        description: "报告类型"
+        type: choice
+        options: [auto, quick, morning, evening]
+        default: auto
       dryRun:
         description: "仅预览,不推送、不写状态"
         type: boolean
         default: false
       force:
-        description: "忽略去重状态,全量预览"
+        description: "忽略去重状态与发布锁,强制重发"
         type: boolean
         default: false
+  # 外部按需触发(手机快捷指令 / 自动化):POST /repos/{owner}/{repo}/dispatches
+  #   body: {"event_type": "quick-report"}
+  repository_dispatch:
+    types: [quick-report]
 
 # 去重状态经 actions/cache 传递,仓库本身只需读权限
 permissions:
   contents: read
 
-# 同一时刻只允许一个实例,避免状态缓存互相覆盖
 concurrency:
   group: daily-report
   cancel-in-progress: false
@@ -33,7 +44,8 @@ concurrency:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 需容纳"等到目标时刻"的等待(最多 maxWaitMinutes),故放宽到 30 分钟
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -42,18 +54,20 @@ jobs:
           node-version: "20"
           cache: npm
 
-      # 恢复上次运行写入的去重状态;本次运行结束后由 cache 的 post 阶段自动保存
-      - name: 恢复去重状态
+      # 去重状态 + 中文字体缓存(字体约 1.1MB,缓存后无需每次重新下载)
+      - name: 恢复状态与字体缓存
         uses: actions/cache@v4
         with:
-          path: data/state.json
+          path: |
+            data/state.json
+            data/fonts
           key: bot-state-${{ github.run_id }}
           restore-keys: |
             bot-state-
 
       - run: npm ci
 
-      - name: 生成并发送早晚报
+      - name: 生成并发送报告
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -63,6 +77,23 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }} # 提升 GitHub API 限额(60→5000 次/小时)
         run: |
           FLAGS=""
+
+          # 仅"定时触发"启用发布锁(等待到点 + 当日幂等);手动触发立即发送
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            FLAGS="$FLAGS --scheduled"
+          fi
+
+          # 快报:repository_dispatch 事件,或手动选择 mode=quick
+          MODE="${{ inputs.mode }}"
+          if [[ "${{ github.event_name }}" == "repository_dispatch" || "$MODE" == "quick" ]]; then
+            FLAGS="$FLAGS --quick"
+          fi
+          if [[ "$MODE" == "morning" || "$MODE" == "evening" ]]; then
+            FLAGS="$FLAGS --kind=$MODE"
+          fi
+
           if [[ "${{ inputs.force }}" == "true" ]]; then FLAGS="$FLAGS --force"; fi
           if [[ "${{ inputs.dryRun }}" == "true" ]]; then FLAGS="$FLAGS --dry-run --force"; fi
+
+          echo "运行参数: $FLAGS"
           npm run morning -- $FLAGS

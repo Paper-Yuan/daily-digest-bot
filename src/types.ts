@@ -11,6 +11,9 @@
 
 export type ModuleName = 'weather' | 'calendar' | 'github' | 'rss' | 'baiduhot';
 
+/** 报告类型:早报 / 晚报 / 随时快报 */
+export type ReportKind = 'morning' | 'evening' | 'quick';
+
 /** 所有抓取模块的统一返回结构 */
 export interface ModuleResult<T> {
   ok: boolean;
@@ -250,8 +253,42 @@ export interface LimitsConfig {
   maxCalendarEvents?: number;
   maxReleases?: number;
   maxRssItems?: number;
+  /** 热搜条数上限(覆盖 baiduhot.maxItems) */
+  maxHotItems?: number;
   /** 摘要截断字符数 */
   summaryChars?: number;
+}
+
+/**
+ * 发布时间锁定。
+ * 仅对 --scheduled(CI 定时)运行生效:定时任务会提前一点触发,进程等到目标时刻再发,
+ * 保证不会早于设定时间;并记录"当日该时段已发送",避免定时与手动触发重复推送。
+ */
+export interface ScheduleConfig {
+  /** 早报目标发布时间(本地时区),如 "08:00" */
+  morning?: string;
+  /** 晚报目标发布时间(本地时区),如 "21:00" */
+  evening?: string;
+  /** true(默认)= 早于目标时刻则等待到点再发;false = 立即发送不等 */
+  lockTime?: boolean;
+  /** 单次等待上限(分钟,默认 30):超过则不再等待直接发送,避免长时间占用 CI */
+  maxWaitMinutes?: number;
+}
+
+/** 报告图片(与文本一同推送;生成失败自动降级为仅文本) */
+export interface ImageConfig {
+  enabled?: boolean;
+  /** 图片宽度(px),默认 900 */
+  width?: number;
+  /** 字体文件地址(可覆盖内置默认值);下载失败只会跳过图片,不影响文本推送 */
+  fontUrl?: string;
+}
+
+/** 随时快报:手动/URL 触发的即时报告,不受发布锁限制,条数更精简 */
+export interface QuickConfig {
+  enabled?: boolean;
+  /** 覆盖 limits 中的条数上限 */
+  limits?: LimitsConfig;
 }
 
 export interface BotConfig {
@@ -265,6 +302,12 @@ export interface BotConfig {
   baiduhot: BaiduHotConfig;
   notify: NotifyConfig;
   limits: LimitsConfig;
+  /** 发布时间锁定(早报/晚报目标时刻与当日去重锁) */
+  schedule: ScheduleConfig;
+  /** 图片版报告 */
+  image: ImageConfig;
+  /** 随时快报 */
+  quick: QuickConfig;
   /** 状态文件路径,默认 data/state.json */
   statePath: string;
 }
@@ -293,6 +336,8 @@ export interface BotState {
   rss?: { feeds?: Record<string, RssFeedState> };
   /** 百度热搜:已见过的词条(用于标记"新上榜") */
   baidu?: { seen?: string[] };
+  /** 发布锁:各时段最近一次成功发送的本地日期(YYYY-MM-DD) */
+  sends?: { morning?: string; evening?: string };
 }
 
 /* ---------------- 报告渲染 ---------------- */
@@ -303,8 +348,8 @@ export interface ReportFailure {
 }
 
 export interface ReportContext {
-  /** 'morning' = 早报,'evening' = 晚报(渲染头部与问候语随之变化) */
-  reportKind: 'morning' | 'evening';
+  /** 'morning' 早报 / 'evening' 晚报 / 'quick' 随时快报(渲染头部与问候语随之变化) */
+  reportKind: ReportKind;
   greeting: string;
   /** '2026-09-13 星期日' */
   dateLabel: string;

@@ -1,8 +1,8 @@
 {
-  "name": "daily-digest-bot",
-  "version": "1.0.0",
+  "name": "morning-report-bot",
+  "version": "0.1.0",
   "private": true,
-  "description": "聚合天气/日历课表/GitHub 动态/RSS/百度热搜的每日早报+晚报推送机器人(GitHub Actions 定时触发,零服务器成本)",
+  "description": "聚合天气/日历课表/GitHub Release/RSS 的每日早报推送机器人(GitHub Actions 定时触发,零服务器成本)",
   "scripts": {
     "morning": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
@@ -22,5 +22,8 @@
     "tsx": "^4.16.0",
     "typescript": "^5.5.4",
     "vitest": "^2.1.1"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "^1.0.9"
   }
 }
