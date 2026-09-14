@@ -145,9 +145,23 @@
 
 | 方式 | 操作 |
 | --- | --- |
+| **给机器人发一条消息** | 发 `/quick`（需先部署 [`cloudflare/`](cloudflare/) 触发器，见下） |
 | **网页 / 手机 App** | Actions 页 → Run workflow → `mode` 选 `quick` |
 | **一条链接（手机快捷指令/自动化）** | `POST /repos/{owner}/{repo}/actions/workflows/morning.yml/dispatches`，body `{"ref":"main","inputs":{"mode":"quick"}}` |
 | **本地** | `npm run morning -- --quick --dry-run` |
+
+#### 用 Telegram 消息触发（可选）
+
+默认做不到「给机器人发消息就出报告」——Actions 跑完就退出，没法常驻监听消息。项目在
+[`cloudflare/`](cloudflare/) 提供了一个 Cloudflare Worker 触发器（免费额度足够个人使用）：
+
+```
+Telegram ──/quick──→ Cloudflare Worker ──repository_dispatch──→ GitHub Actions ──→ 推送报告
+```
+
+部署后发一条 `/quick`，约 1 分钟收到快报。Worker 只当"门铃"，**报告内容不经过它**；
+带 `secret_token` 校验 + 会话白名单 + 60 秒冷却。完整步骤见
+[`cloudflare/README.md`](cloudflare/README.md)。
 
 **关键设计：快报是「快照」语义，不是「增量」。**
 
@@ -156,9 +170,9 @@
 | 推送逻辑 | 只推上次之后的新内容 | 现在有什么就展示什么 |
 | 去重状态 | 读 + 写 | **只读不写** |
 | 条数上限 | 按 `limits` | 按 `quick.limits`，更精简 |
-| 发布锁 | 生效 | 不生效（即时响应） |
+| 定时 | 08:00 / 21:00 | 随时，即时响应 |
 
-之所以强调"不写状态"——否则会出现「下午发了条快报，把当天新文章标记为已读，第二天早报一条都没有」的隐蔽 bug。快报运行结束后所有状态改动都会被丢弃。
+之所以强调"不写状态"——否则会出现「下午发了条快报，把当天新文章标记为已读，第二天早报一条都没有」的隐蔽 bug。快报运行结束后所有状态改动都会被丢弃，所以**随便点都不会影响早晚报**。
 
 ### 📝 项目单句介绍
 
