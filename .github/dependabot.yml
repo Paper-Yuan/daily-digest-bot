@@ -1,9 +1,28 @@
 version: 2
+
+# 为什么给这几个依赖加 major 忽略:
+# 都是"能升,但需要在代码/配置上先做迁移"的升级,不是安全补丁。
+# 忽略不等于放弃升级 —— 等真的需要新特性时,照着下面的原因逐项迁移即可。
+# 未加忽略的 patch / minor 仍会正常提 PR。
 updates:
   - package-ecosystem: npm
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      # 运行环境是 Node 24,类型包大版本应当跟着运行时走,不该被顶到 26。
+      # (26 上会报 telegram.ts 的 Buffer<ArrayBufferLike> 不能赋给 BlobPart)
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # TS 7 移除了 moduleResolution: node10,需要先改 tsconfig 的模块解析策略。
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # 0.27 换了 rrule 引擎(→ rrule-temporal)且 parseICS 返回类型从
+      # VEvent 变成 CalendarComponent,需要重写 calendar.ts 的重复事件适配并重验。
+      # 已知的 axios/uuid 漏洞已用 package.json 的 overrides 修掉,不依赖这次升级。
+      - dependency-name: "node-ical"
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
