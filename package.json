@@ -1,5 +1,5 @@
 {
-  "name": "morning-report-bot",
+  "name": "daily-digest-bot",
   "version": "0.1.0",
   "private": true,
   "description": "聚合天气/日历课表/GitHub Release/RSS 的每日早报推送机器人(GitHub Actions 定时触发,零服务器成本)",

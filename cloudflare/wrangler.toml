@@ -1,15 +1,20 @@
 # Cloudflare Worker 配置(wrangler 部署用)
 #
-# 用后台网页部署的话不需要这个文件,见 README.md 的"方式一"。
-# 用命令行部署:wrangler deploy
+# 后台网页部署不需要这个文件,见 README.md 的"方式一"。
+# 命令行部署:
+#   npx wrangler deploy          # 部署
+#   npx wrangler secret put NAME # 设置密钥(逐个执行)
+#
+# 注意:name 一旦部署就成为 Worker 的固定标识与默认域名前缀
+# (https://<name>.<子域>.workers.dev),改名会创建新的 Worker。
 
 name = "digest-bot-trigger"
 main = "telegram-trigger.js"
 compatibility_date = "2026-09-14"
 
-# 非敏感配置放这里;敏感项(TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID /
-# GITHUB_TOKEN / WEBHOOK_SECRET)用 `wrangler secret put <名字>` 设置。
+# 非敏感配置放这里。敏感项用 `wrangler secret put <名字>` 逐个设置:
+#   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / GITHUB_TOKEN / WEBHOOK_SECRET
 [vars]
 GITHUB_REPO = "your-github-username/daily-digest-bot"
 
-# Worker 不存任何报告数据,也不需要持久化存储,因此无需 KV / D1 / R2 绑定。
+# Worker 不存储任何报告数据,无需 KV / D1 / R2 绑定。

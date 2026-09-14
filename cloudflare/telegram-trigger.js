@@ -12,7 +12,9 @@
  * 需要的环境变量(在 Cloudflare 后台配置):
  *   TELEGRAM_BOT_TOKEN  机器人 token(用于回消息)
  *   TELEGRAM_CHAT_ID    允许的会话 id,多个用英文逗号分隔
- *   GITHUB_TOKEN        细粒度 PAT,仅需该仓库的 Actions: Read and write
+ *   GITHUB_TOKEN        细粒度 PAT,仅需该仓库的 Contents: Read and write
+ *                       (repository_dispatch 走 POST /repos/{owner}/{repo}/dispatches,
+ *                        按 GitHub 文档要求 Contents 写权限,Actions 权限无效)
  *   GITHUB_REPO         形如 owner/repo
  *   WEBHOOK_SECRET      自定义随机串,与 setWebhook 的 secret_token 保持一致
  */

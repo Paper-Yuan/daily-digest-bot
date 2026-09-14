@@ -27,9 +27,10 @@ Cloudflare Workers 免费额度足够个人使用,且只当"门铃"——报告�
 
 - **Token name**:随意,如 `digest-bot-trigger`
 - **Expiration**:按需(过期后需重新生成并更新 Worker 变量)
-- **Repository access** → Only select repositories → 选你的 `morning-report-bot`
-- **Permissions** → Repository permissions → 找到 **Actions** → 设为 **Read and write**
+- **Repository access** → Only select repositories → 选你 fork 或自建的 `daily-digest-bot`
+- **Permissions** → Repository permissions → 找到 **Contents** → 设为 **Read and write**
   (只需这一项,不要给别的权限)
+  > 为什么是 Contents:触发走的是 `POST /repos/{owner}/{repo}/dispatches`,该接口按 GitHub 官方文档要求 **Contents: write** 权限(Actions 权限不管用,给了也会 401/403)
 - 生成并复制 token(`github_pat_...`)
 
 ### 2. 生成一个 webhook 密钥
@@ -54,7 +55,7 @@ openssl rand -hex 24
    | `TELEGRAM_BOT_TOKEN` | 你的机器人 token(BotFather 给的) |
    | `TELEGRAM_CHAT_ID` | 允许触发的会话 id;多个用英文逗号分隔 |
    | `GITHUB_TOKEN` | 上一步的 PAT |
-   | `GITHUB_REPO` | `your-github-username/daily-digest-bot`(改成你的 `owner/repo`) |
+   | `GITHUB_REPO` | 你的 `owner/repo`,例如 `your-name/daily-digest-bot` |
    | `WEBHOOK_SECRET` | 上一步生成的密钥 |
 
 5. 保存后记下 Worker 地址:`https://digest-bot-trigger.<你的子域>.workers.dev`
@@ -118,7 +119,7 @@ bash set-webhook.sh <BOT_TOKEN> <WORKER_URL> <WEBHOOK_SECRET>
 | --- | --- |
 | 发消息毫无反应 | webhook 没设成功。跑 `curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"` 看 `last_error_message` |
 | 回「⛔ 没有触发权限」 | `TELEGRAM_CHAT_ID` 没填对。先临时填错值发一次,Worker 日志里能看到实际的 chat id |
-| 回「❌ 触发失败:HTTP 401」 | `GITHUB_TOKEN` 权限不足或已过期。确认 Actions 权限是 **Read and write**,且仓库选择正确 |
+| 回「❌ 触发失败:HTTP 401」 | `GITHUB_TOKEN` 权限不足或已过期。确认 **Contents** 权限是 **Read and write**,且仓库选择正确 |
 | 回「❌ 触发失败:HTTP 404」 | `GITHUB_REPO` 写错了(必须是 `owner/repo` 形式) |
 | 回执正常但收不到报告 | 去仓库 **Actions** 页看是否有 `repository_dispatch` 触发的运行;若失败,看该次运行日志 |
 | 回「⏳ 刚刚已经触发过了」 | 60 秒冷却,稍等再试 |

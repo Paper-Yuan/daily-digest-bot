@@ -97,7 +97,7 @@
 - **从 daily60s 学到的触发模式**：定时（Cron Triggers）+ 手动（向 Worker URL `POST`）双模式——这正是我们「快报」的标准架构范式。
 - **从 hotpush 学到的交互**：在定时摘要之外提供「立即推送摘要」按钮，降低用户验证成本。
 - **从 60s 学到的图片方案**：API 直接返回 `image/png` 二进制（`?encoding=image`），说明「服务端渲染成图再直传」是成熟低成本路线；我们可用 HTML→截图（Playwright/`puppeteer-core`）或 `satori`+`resvg` 生成报告图。
-- **从 daily-morning-report 学到的架构**：数据采集脚本 → AI/组装 → 卡片发送脚本 三段解耦，便于单独测试（与我们的「62 个单元测试」理念一致）。
+- **从 daily-morning-report 学到的架构**：数据采集脚本 → AI/组装 → 卡片发送脚本 三段解耦，便于单独测试（与我们的「近百个单元测试」理念一致）。
 - **从 RSS-to-Telegram-Bot 学到的细节**：长图作为文件发送以防 Telegram 压缩导致不可读；emoji 图片替换。
 
 ### 4.2 常见坑（务必规避）
