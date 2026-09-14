@@ -110,7 +110,7 @@ describe('renderReport', () => {
     expect(html).toContain('<b>🌙 晚报</b> ·');
   });
 
-  it('GitHub 高星新项目区块:星数紧凑格式与链接', () => {
+  it('GitHub 新项目榜区块:序号、星数紧凑格式与链接', () => {
     const ctx = baseCtx({
       hasContent: true,
       discoveries: [{
@@ -119,11 +119,50 @@ describe('renderReport', () => {
       }],
     });
     const { text, html } = renderReport(ctx);
-    expect(text).toContain('▌🚀 GitHub 高星新项目 · 1 条');
-    expect(text).toContain('• cn/cool ⭐ 3.2k · TypeScript');
+    expect(text).toContain('▌🚀 GitHub 新项目榜 · 1 条');
+    expect(text).toContain('1. cn/cool  ⭐ 3.2k · TypeScript');
     expect(text).toContain('  很酷的<b>项目');
     expect(html).toContain('<a href="https://github.com/cn/cool">cn/cool</a>');
     expect(html).toContain('<blockquote>很酷的&lt;b&gt;项目</blockquote>');
+  });
+
+  it('活跃度行:有提交/issue/得分时展示,缺失时整行省略', () => {
+    const withAct = renderReport(baseCtx({
+      hasContent: true,
+      discoveries: [{
+        repo: 'cn/cool', url: 'https://github.com/cn/cool', stars: 3210,
+        description: '项目', createdAt: '2026-09-10T00:00:00Z',
+        commits: 64, issues: 5, score: 66.91,
+      }],
+    }));
+    expect(withAct.text).toContain('  提交 64 · issue 5 · 得分 66.9');
+    expect(withAct.html).toContain('提交 64 · issue 5 · 得分 66.9');
+
+    // 没配 token / 接口失败时不该显示"提交 0"这种假数据
+    const noAct = renderReport(baseCtx({
+      hasContent: true,
+      discoveries: [{
+        repo: 'cn/cool', url: 'https://github.com/cn/cool', stars: 3210,
+        description: '项目', createdAt: '2026-09-10T00:00:00Z',
+      }],
+    }));
+    expect(noAct.text).not.toContain('提交');
+    expect(noAct.text).not.toContain('得分');
+  });
+
+  it('榜单按传入顺序编号(数据层已按得分排序)', () => {
+    const { text } = renderReport(baseCtx({
+      hasContent: true,
+      discoveries: [
+        { repo: 'a/one', url: 'https://github.com/a/one', stars: 100, createdAt: '2026-09-10T00:00:00Z', score: 90 },
+        { repo: 'b/two', url: 'https://github.com/b/two', stars: 900, createdAt: '2026-09-10T00:00:00Z', score: 40 },
+      ],
+    }));
+    const lines = text.split('\n');
+    const one = lines.findIndex((l) => l.startsWith('1. a/one'));
+    const two = lines.findIndex((l) => l.startsWith('2. b/two'));
+    expect(one).toBeGreaterThan(-1);
+    expect(two).toBeGreaterThan(one);
   });
 
   it('百度热搜区块:数字编号、🆕 标记与 html 链接', () => {

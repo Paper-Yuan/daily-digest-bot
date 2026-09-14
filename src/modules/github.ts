@@ -9,9 +9,10 @@
  * 去重游标写在 ctx.state 草稿上,由 main 决定落盘。绝不向调用方抛异常。
  */
 
-import { HttpError, httpGetJson } from '../utils/http';
+import { HttpError, httpGetJson, httpPostJson } from '../utils/http';
 import { pushCapped, pushCappedNumber } from '../utils/state';
 import type {
+  DiscoveryWeights,
   FetchContext,
   GithubDiscovery,
   GithubRelease,
@@ -46,19 +47,33 @@ interface SearchApiRepo {
 
 const TIMEOUT_MS = 15_000;
 const PER_PAGE = 10;
-const SEARCH_PER_PAGE = 50;
+/** Search API 单页上限 */
+const SEARCH_PER_PAGE = 100;
+/** GitHub Search API 最多只返回 1000 条结果,再翻页会直接报错 */
+const SEARCH_RESULT_CAP = 1000;
 /** 游标上限 */
 const SEEN_CAP = 50;
-const DISCOVERY_SEEN_CAP = 300;
+/**
+ * discovery 游标容量:候选池最大 1000,若游标太小会把刚见过的仓库挤出去、
+ * 导致它们被当成"新项目"重推。窗口本身只有 7~14 天,超出窗口的 id 不会再进候选池,
+ * 所以这个容量足够覆盖整个窗口。
+ */
+const DISCOVERY_SEEN_CAP = 3000;
 const DEFAULT_MAX_PER_REPO = 3;
 const DEFAULT_SUMMARY_CHARS = 100;
 /** 新项目"单句介绍"的长度上限(图片按单行渲染,过长会被截断) */
 const INTRO_MAX_CHARS = 52;
+/** 活跃度加权的默认权重(与 GitHub 中文区新项目加权榜一致) */
+const DEFAULT_WEIGHTS: DiscoveryWeights = { stars: 0.4, commits: 0.3, issues: 0.3 };
+/** 单次 GraphQL 请求里最多塞多少个仓库(别名分批,避免查询过大被拒) */
+const METRICS_CHUNK = 40;
 const DEFAULT_DISCOVER = {
   createdWithinDays: 7,
   minStars: 100,
   chineseOnly: true,
   maxItems: 10,
+  /** 候选池:按 star 取前 N 个再打分,池子太小会漏掉"低星高活跃"项目 */
+  poolSize: 200,
   firstRunQuiet: false,
 };
 
@@ -166,12 +181,18 @@ export function toOneLineIntro(
   return out || undefined;
 }
 
-/** 统一给 GitHub API 用的请求头(带 token 提升限额) */function githubHeaders(): Record<string, string> {
+/** 取 GitHub token(CI 由 github.token 注入,本地可用 GH_TOKEN) */
+function githubToken(): string | undefined {
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || undefined;
+}
+
+/** 统一给 GitHub API 用的请求头(带 token 提升限额) */
+function githubHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
   };
-  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  const token = githubToken();
   if (token) headers.authorization = `Bearer ${token}`;
   return headers;
 }
@@ -274,10 +295,190 @@ async function fetchReleasesPart(
   return { items: out, warnings, failed: false };
 }
 
-/* ---------------- discover:发现高星新项目 ---------------- */
+/* ---------------- discover:中文区新项目加权榜 ---------------- */
 
-/** 名称/描述含 CJK 字符视为"中文区"项目(启发式) */
+/**
+ * "中文区"判定(启发式):含 CJK 汉字,**且不含日文假名**。
+ *
+ * 为什么排除假名:日文里大量使用汉字,只判断"有没有汉字"会把日文项目也捞进来
+ * (如「中文ドキュメント」这种)。假名(平假名/片假名)是日文独有的书写特征,
+ * 拿它当反例即可把日文项目挡在外面 —— 这也是候选池口径"含中文且非日文"的由来。
+ * 局限:繁体中文会被正常纳入(汉字判断对简繁一视同仁)。
+ */
 const CJK_RE = /[\u4e00-\u9fff]/;
+const KANA_RE = /[\u3040-\u309f\u30a0-\u30ff]/;
+
+/** 描述/名称是否属于"中文区"项目 */
+export function isChineseProject(text: string): boolean {
+  return CJK_RE.test(text) && !KANA_RE.test(text);
+}
+
+const GITHUB_GRAPHQL_URL = 'https://api.github.com/graphql';
+
+/** 参与打分的三项指标 */
+interface DiscoveryMetrics {
+  stars: number;
+  commits: number;
+  issues: number;
+}
+
+/** 单个仓库的活跃度(默认分支提交数 / issue 数,均不含 PR) */
+interface RepoActivity {
+  commits: number;
+  issues: number;
+}
+
+/**
+ * 规整权重配置。
+ * 显式写了任意一项时,未写的项按 0 处理(如只写 stars 就是"纯 star 排序");
+ * 一项都没写则用默认的 0.4/0.3/0.3。最后归一化到和为 1,因此写 4/3/3 也一样。
+ */
+export function resolveWeights(raw: Partial<DiscoveryWeights> | undefined): DiscoveryWeights {
+  const keys: (keyof DiscoveryWeights)[] = ['stars', 'commits', 'issues'];
+  const given = raw && keys.some((k) => raw[k] !== undefined);
+  const pick = (k: keyof DiscoveryWeights): number => {
+    const v = raw?.[k];
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
+    return given ? 0 : DEFAULT_WEIGHTS[k];
+  };
+  const w = { stars: pick('stars'), commits: pick('commits'), issues: pick('issues') };
+  const sum = w.stars + w.commits + w.issues;
+  if (sum <= 0) return { ...DEFAULT_WEIGHTS };
+  return { stars: w.stars / sum, commits: w.commits / sum, issues: w.issues / sum };
+}
+
+/**
+ * 加权评分:各项先 log1p 压缩重尾,再 min-max 归一到 [0,1],加权求和后 ×100。
+ *
+ * 为什么先 log1p:star 是重尾分布(几千 vs 几十),直接 min-max 会让头部项目独吞
+ * 1.0、其余全挤在 0 附近;取对数后中低段才拉得开,分数才有区分度。
+ * 为什么 min-max 而不是"除以最大值":归一到同一量纲后,三项权重才真的可比。
+ * 结果按得分降序(相同得分保持传入顺序),返回新数组、不改动入参。
+ */
+export function scoreDiscoveries<T extends DiscoveryMetrics>(
+  items: T[],
+  weights: DiscoveryWeights,
+): (T & { score: number })[] {
+  const norm = (pick: (i: T) => number): number[] => {
+    const logs = items.map((i) => Math.log1p(Math.max(0, pick(i))));
+    if (logs.length === 0) return [];
+    const lo = Math.min(...logs);
+    const hi = Math.max(...logs);
+    // 全部相等时(含只有一个候选)归一化无意义,统一记 0
+    return logs.map((x) => (hi === lo ? 0 : (x - lo) / (hi - lo)));
+  };
+  const ns = norm((i) => i.stars);
+  const nc = norm((i) => i.commits);
+  const ni = norm((i) => i.issues);
+
+  return items
+    .map((item, idx) => ({
+      ...item,
+      score:
+        (weights.stars * (ns[idx] ?? 0) +
+          weights.commits * (nc[idx] ?? 0) +
+          weights.issues * (ni[idx] ?? 0)) *
+        100,
+    }))
+    .sort((a, b) => b.score - a.score);
+}
+
+/**
+ * 批量取仓库活跃度(提交总数 + issue 总数)。
+ *
+ * 为什么走 GraphQL:提交总数没有便宜的 REST 端点(得翻 commits 的 Link 头,一仓一请求),
+ * issue 计数在 REST 里只能走 Search API(认证后每小时 30 次,几十个仓库就撞限流)。
+ * GraphQL 支持别名批量,一个请求问 40 个仓库,而且 issues 天然不含 PR
+ * (TypeScript 实测:issues 43504 / pullRequests 19497,与 `type:issue` 搜索口径一致)。
+ *
+ * 注意这取的是默认分支的**历史提交总数**;候选池只含窗口内新建的仓库,
+ * 所以它约等于窗口内的提交量。
+ */
+async function fetchRepoActivity(fullNames: string[]): Promise<Map<string, RepoActivity>> {
+  const out = new Map<string, RepoActivity>();
+  for (let i = 0; i < fullNames.length; i += METRICS_CHUNK) {
+    const chunk = fullNames.slice(i, i + METRICS_CHUNK);
+    const fields = chunk.map((full, idx) => {
+      const slash = full.indexOf('/');
+      const owner = full.slice(0, slash);
+      const name = full.slice(slash + 1);
+      // JSON.stringify 的转义规则与 GraphQL 字符串字面量一致,可安全拼接
+      return (
+        `  r${idx}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {` +
+        ' defaultBranchRef { target { ... on Commit { history { totalCount } } } }' +
+        ' issues { totalCount } }'
+      );
+    });
+    const resp = await httpPostJson<{ data?: Record<string, unknown> | null }>(
+      GITHUB_GRAPHQL_URL,
+      { query: `query {\n${fields.join('\n')}\n}` },
+      { timeoutMs: TIMEOUT_MS, headers: githubHeaders() },
+    );
+    const data = resp?.data;
+    // 别名字段缺失说明响应不是我们预期的东西(如拿错端点),宁可整批降级也别拿垃圾排序
+    if (!data || typeof data !== 'object' || !('r0' in data)) {
+      throw new Error('GraphQL 响应格式异常(缺少仓库字段)');
+    }
+    chunk.forEach((full, idx) => {
+      const node = data[`r${idx}`];
+      if (!node || typeof node !== 'object') {
+        // 搜索之后被改名/删除/转为私有:按 0 计,不因此让整批评分失败
+        out.set(full, { commits: 0, issues: 0 });
+        return;
+      }
+      const n = node as {
+        defaultBranchRef?: { target?: { history?: { totalCount?: number } } } | null;
+        issues?: { totalCount?: number } | null;
+      };
+      const commits = n.defaultBranchRef?.target?.history?.totalCount;
+      const issues = n.issues?.totalCount;
+      out.set(full, {
+        commits: typeof commits === 'number' ? commits : 0,
+        issues: typeof issues === 'number' ? issues : 0,
+      });
+    });
+  }
+  return out;
+}
+
+/**
+ * 拉候选池:按 star 从高到低取前 poolSize 个(与"star 榜 top N"的候选口径一致)。
+ * 首页失败直接抛出(没有候选就无从推送);后续页失败只记警告,
+ * 用已经拿到的部分继续 —— 池子小一点会让排序略失准,但不影响正确性。
+ */
+async function searchCandidates(
+  q: string,
+  poolSize: number,
+  warnings: string[],
+): Promise<SearchApiRepo[]> {
+  const want = Math.max(1, Math.min(poolSize, SEARCH_RESULT_CAP));
+  const pages = Math.ceil(want / SEARCH_PER_PAGE);
+  const out: SearchApiRepo[] = [];
+  for (let page = 1; page <= pages; page++) {
+    const url =
+      'https://api.github.com/search/repositories' +
+      `?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=${SEARCH_PER_PAGE}&page=${page}`;
+    let raw: unknown[];
+    let items: SearchApiRepo[];
+    try {
+      const resp = await httpGetJson<{ items?: unknown }>(url, {
+        timeoutMs: TIMEOUT_MS,
+        headers: githubHeaders(),
+      });
+      if (!Array.isArray(resp.items)) throw new Error('搜索响应格式异常(非数组)');
+      raw = resp.items as unknown[];
+      items = raw.filter(isSearchRepo).filter((r) => r.fork !== true); // 排除 fork
+    } catch (err) {
+      if (page === 1) throw err;
+      warnings.push(`候选池第 ${page} 页拉取失败,已用前 ${out.length} 个候选继续(${errCause(err)})`);
+      break;
+    }
+    out.push(...items);
+    // 用"未过滤的原始条数"判断是否到底:过滤掉 fork 后不足一页不代表没有下一页
+    if (raw.length < SEARCH_PER_PAGE) break;
+  }
+  return out;
+}
 
 async function discoverPart(
   ctx: FetchContext,
@@ -287,9 +488,12 @@ async function discoverPart(
   const days = d.createdWithinDays ?? DEFAULT_DISCOVER.createdWithinDays;
   const chineseOnly = d.chineseOnly ?? DEFAULT_DISCOVER.chineseOnly;
   const maxItems = d.maxItems ?? DEFAULT_DISCOVER.maxItems;
+  const poolSize = d.poolSize ?? DEFAULT_DISCOVER.poolSize;
   // discover 默认首次就推当前榜单("新项目发现"语义下首轮内容即有价值)
   const quiet = d.firstRunQuiet ?? DEFAULT_DISCOVER.firstRunQuiet;
   const force = ctx.force === true;
+  const weights = resolveWeights(d.weights);
+  const warnings: string[] = [];
 
   if (!ctx.state.github) ctx.state.github = {};
   if (!ctx.state.github.discovery || !Array.isArray(ctx.state.github.discovery.seenIds)) {
@@ -301,22 +505,12 @@ async function discoverPart(
     .toISOString()
     .slice(0, 10);
   const q = `created:>=${since} stars:>=${minStars}`;
-  const url =
-    'https://api.github.com/search/repositories' +
-    `?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=${SEARCH_PER_PAGE}`;
 
   let candidates: SearchApiRepo[];
   try {
-    const resp = await httpGetJson<{ items?: unknown }>(url, {
-      timeoutMs: TIMEOUT_MS,
-      headers: githubHeaders(),
-    });
-    if (!Array.isArray(resp.items)) throw new Error('搜索响应格式异常(非数组)');
-    candidates = (resp.items as unknown[])
-      .filter(isSearchRepo)
-      .filter((r) => r.fork !== true); // 排除 fork
+    candidates = await searchCandidates(q, poolSize, warnings);
   } catch (err) {
-    return { items: [], warnings: [], failed: true, cause: errCause(err) };
+    return { items: [], warnings, failed: true, cause: errCause(err) };
   }
 
   // 全量候选 id 记入游标(含被中文过滤掉的):之后切换 chineseOnly 也不会重复推
@@ -326,17 +520,48 @@ async function discoverPart(
 
   // 首次静默:只建立基线,不推送
   if (!force && prevSeen.length === 0 && quiet) {
-    return { items: [], warnings: [], failed: false };
+    return { items: [], warnings, failed: false };
   }
 
-  const freshBase = candidates.filter(
-    (r) => !chineseOnly || CJK_RE.test(`${r.full_name} ${r.description ?? ''}`),
+  const pool = candidates.filter(
+    (r) => !chineseOnly || isChineseProject(`${r.full_name} ${r.description ?? ''}`),
   );
-  // force 是全量预览语义:忽略 seen,当前可见的都输出
-  const fresh = (force ? freshBase : freshBase.filter((r) => !prevSeen.includes(r.id)))
-    .slice(0, maxItems);
 
-  const items: GithubDiscovery[] = fresh.map((r) => {
+  // 活跃度数据:只在权重确实用到时才请求。拿不到就退化为按 star 排序
+  // (commit/issue 全为 0 时它们的归一化项恒为 0,得分自然只由 star 决定)。
+  const needActivity = weights.commits > 0 || weights.issues > 0;
+  let activity: Map<string, RepoActivity> | null = null;
+  if (needActivity && pool.length > 0) {
+    if (!githubToken()) {
+      warnings.push('未配置 GITHUB_TOKEN,无法取提交/issue 数,本次按 star 排序');
+    } else {
+      try {
+        activity = await fetchRepoActivity(pool.map((r) => r.full_name));
+      } catch (err) {
+        warnings.push(`活跃度数据拉取失败,本次按 star 排序(${errCause(err)})`);
+      }
+    }
+  }
+
+  // 归一化在**整个候选池**上做(而不是只看没见过的),这样得分跨天可比、
+  // 排序也不会因为"今天恰好没新增"而整体漂移
+  const scored = scoreDiscoveries(
+    pool.map((r) => {
+      const act = activity?.get(r.full_name);
+      return {
+        repo: r,
+        stars: r.stargazers_count,
+        commits: act?.commits ?? 0,
+        issues: act?.issues ?? 0,
+      };
+    }),
+    weights,
+  );
+
+  // force 是全量预览语义:忽略 seen,当前可见的都输出
+  const fresh = force ? scored : scored.filter((s) => !prevSeen.includes(s.repo.id));
+
+  const items: GithubDiscovery[] = fresh.slice(0, maxItems).map(({ repo: r, commits, issues, score }) => {
     const item: GithubDiscovery = {
       repo: r.full_name,
       url: r.html_url,
@@ -344,11 +569,17 @@ async function discoverPart(
       createdAt: r.created_at,
     };
     if (r.language) item.language = r.language;
+    // 只有真拿到活跃度数据才带上这几项,免得把"取不到"显示成"零提交零 issue"
+    if (activity) {
+      item.commits = commits;
+      item.issues = issues;
+      item.score = score;
+    }
     // 单句介绍:描述取首句;仓库没写描述时给一句兜底,保证卡片信息结构一致
     item.description = toOneLineIntro(r.description, INTRO_MAX_CHARS) ?? '暂无简介';
     return item;
   });
-  return { items, warnings: [], failed: false };
+  return { items, warnings, failed: false };
 }
 
 /* ---------------- 编排:两部分可并存 ---------------- */

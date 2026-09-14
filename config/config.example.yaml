@@ -52,6 +52,11 @@ github:
     createdWithinDays: 7         # 只看最近 N 天创建的仓库
     chineseOnly: true            # 名称/描述含中文才算"中文区"(启发式过滤)
     maxItems: 10
+    poolSize: 200                # 参与打分的候选池:按 star 从高到低取前 N 个(上限 1000)
+    weights:                     # 榜单加权:star / 提交数 / issue 数
+      stars: 0.4                 # 只写 stars: 1 → 退回纯 star 排序(不请求活跃度数据)
+      commits: 0.3
+      issues: 0.3
     firstRunQuiet: false         # 首次运行直接展示当前榜单
 
 rss:

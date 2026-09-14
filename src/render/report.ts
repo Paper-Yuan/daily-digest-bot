@@ -164,22 +164,41 @@ function releaseBlock(releases: GithubRelease[]): Block {
   return { text, html };
 }
 
-/* ---------------- GitHub 高星新项目(discover) ---------------- */
+/* ---------------- GitHub 新项目榜(discover) ---------------- */
+
+/** 活跃度行:只有拿到数据的项才出现,没配 token/接口失败时整行省略 */
+function activityLine(d: GithubDiscovery): string | undefined {
+  const parts = [
+    d.commits !== undefined ? `提交 ${d.commits}` : '',
+    d.issues !== undefined ? `issue ${d.issues}` : '',
+    d.score !== undefined ? `得分 ${d.score.toFixed(1)}` : '',
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
 
 function discoveryBlock(items: GithubDiscovery[]): Block {
-  const title = textTitle('🚀', 'GitHub 高星新项目', items.length);
+  // 榜首即是打分最高的项目,带序号才读得出"这是榜单"
+  const title = textTitle('🚀', 'GitHub 新项目榜', items.length);
   const text = [title];
-  const html = [`<b>🚀 GitHub 高星新项目 · ${items.length} 条</b>`];
-  for (const d of items) {
+  const html = [`<b>🚀 GitHub 新项目榜 · ${items.length} 条</b>`];
+  items.forEach((d, i) => {
     const meta = `⭐ ${fmtStars(d.stars)}${d.language ? ` · ${d.language}` : ''}`;
-    text.push(`• ${d.repo} ${meta}`);
-    if (d.description) text.push(`  ${d.description}`);
-    text.push(`  ${d.url}`);
-    // html 版把仓库名做成链接
+    const rank = `${i + 1}.`;
+    text.push(`${rank} ${d.repo}  ${meta}`);
+    // html 版把仓库名做成链接(文本版下一行单独给出 URL,便于复制)
     const repoHtml = `<a href="${escapeHtml(d.url)}">${escapeHtml(d.repo)}</a>`;
-    html.push(`• ${repoHtml} ${escapeHtml(meta)}`);
-    if (d.description) html.push(`<blockquote>${escapeHtml(d.description)}</blockquote>`);
-  }
+    html.push(`${rank} ${repoHtml} ${escapeHtml(meta)}`);
+    const act = activityLine(d);
+    if (act) {
+      text.push(`  ${act}`);
+      html.push(escapeHtml(act));
+    }
+    if (d.description) {
+      text.push(`  ${d.description}`);
+      html.push(`<blockquote>${escapeHtml(d.description)}</blockquote>`);
+    }
+    text.push(`  ${d.url}`);
+  });
   return { text, html };
 }
 

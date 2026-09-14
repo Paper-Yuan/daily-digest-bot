@@ -31,6 +31,8 @@ export function defaultConfig(): BotConfig {
         minStars: 100,
         chineseOnly: true,
         maxItems: 10,
+        poolSize: 200,
+        weights: { stars: 0.4, commits: 0.3, issues: 0.3 },
         firstRunQuiet: false,
       },
     },

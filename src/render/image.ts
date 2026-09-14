@@ -630,10 +630,19 @@ function buildReleaseCard(m: CanvasCtx, releases: GithubRelease[], theme: string
 
 function buildDiscoveryCard(m: CanvasCtx, items: GithubDiscovery[], theme: string, contentW: number): Card {
   const lines: LineSpec[] = [];
-  for (const d of items) {
-    // 仓库名与星数/语言合并成一行:比拆两行更紧凑,同时给介绍留出视觉权重
+  items.forEach((d, i) => {
+    // 序号 + 仓库名 + 星数/语言合并成一行:比拆两行更紧凑,同时给介绍留出视觉权重
     const meta = `星 ${fmtStars(d.stars)}${d.language ? ` · ${clean(d.language)}` : ''}`;
-    lines.push({ text: `• ${clean(d.repo)}   ${meta}`, style: 'body', maxLines: 1 });
+    lines.push({ text: `${i + 1}. ${clean(d.repo)}   ${meta}`, style: 'body', maxLines: 1 });
+    // 活跃度:提交/issue/得分。取不到数据时整行省略,不让图片出现"提交 0"的假象
+    const act = [
+      d.commits !== undefined ? `提交 ${d.commits}` : '',
+      d.issues !== undefined ? `issue ${d.issues}` : '',
+      d.score !== undefined ? `得分 ${d.score.toFixed(1)}` : '',
+    ].filter(Boolean);
+    if (act.length > 0) {
+      lines.push({ text: act.join(' · '), style: 'muted', color: COLORS.muted, indent: 14, maxLines: 1 });
+    }
     // 单句介绍:固定一行,超长截断(数据层已取首句并限长)
     if (d.description) {
       lines.push({ text: clean(d.description), style: 'muted', color: COLORS.muted, indent: 14, maxLines: 1 });
@@ -641,10 +650,10 @@ function buildDiscoveryCard(m: CanvasCtx, items: GithubDiscovery[], theme: strin
     if (d.url) {
       lines.push({ text: clean(d.url), style: 'url', color: COLORS.faint, indent: 14, maxLines: 1 });
     }
-  }
+  });
   return buildCard(
     m,
-    { title: `GitHub 高星新项目 · ${items.length} 条`, accent: theme, lines },
+    { title: `GitHub 新项目榜 · ${items.length} 条`, accent: theme, lines },
     contentW,
   );
 }

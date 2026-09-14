@@ -114,6 +114,14 @@ export interface GithubDiscovery {
   description?: string;
   /** 仓库创建时间,ISO */
   createdAt: string;
+  /**
+   * 默认分支历史提交总数、issue 总数(不含 PR)。
+   * 取不到活跃度数据时留空 —— 此时报告不展示该项,排序退化为按 star。
+   */
+  commits?: number;
+  issues?: number;
+  /** 加权得分(0~100),用于排序;仅在拿到活跃度数据时才有意义 */
+  score?: number;
 }
 
 /* ---------------- RSS ---------------- */
@@ -210,6 +218,22 @@ export interface GithubDiscoverConfig {
   maxItems?: number;
   /** 首次运行直接展示当前榜单(默认 false,即首次就推);true 则首次只记录 */
   firstRunQuiet?: boolean;
+  /**
+   * 参与打分的候选池大小(按 star 从高到低取,默认 200,上限 1000)。
+   * 池子越大越能捞到"星不多但迭代猛"的项目,代价是每次运行多几次 Search API 调用。
+   */
+  poolSize?: number;
+  /**
+   * 活跃度加权:三项指标各占多少权重(默认 star 0.4 / commit 0.3 / issue 0.3)。
+   * commit 与 issue 权重都为 0 时不请求活跃度数据;三项全 0 则回落默认权重。
+   */
+  weights?: DiscoveryWeights;
+}
+
+export interface DiscoveryWeights {
+  stars: number;
+  commits: number;
+  issues: number;
 }
 
 export interface GithubConfig {
