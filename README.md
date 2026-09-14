@@ -196,7 +196,7 @@ GitHub 新项目自动提炼**一句话简介**：取描述的**首句**（中�
 
 ## 本地运行（可选）
 
-要求 Node.js ≥ 18.17。
+要求 Node.js ≥ 22.12（测试框架 vitest 5 的运行要求；CI 使用 Node 24）。
 
 ```bash
 npm install
