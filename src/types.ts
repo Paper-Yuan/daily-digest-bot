@@ -384,10 +384,22 @@ export interface PersonalConfig {
   certTimeoutMs?: number;
 }
 
+/**
+ * 推送渠道开关。
+ * enabled 缺省 = 自动:对应环境变量齐了就发,没配就静默跳过;
+ * true = 强制启用,缺环境变量视为故障(退出码 1,便于在 CI 里暴露配置遗漏)。
+ */
 export interface NotifyConfig {
-  /** enabled 缺省 = 自动:配了环境变量就发,没配就静默跳过;true = 强制启用,缺环境变量视为故障 */
+  /** TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID */
   telegram?: { enabled?: boolean };
+  /** FEISHU_WEBHOOK_URL(+ 可选 FEISHU_SECRET 加签) */
   feishu?: { enabled?: boolean };
+  /** DINGTALK_WEBHOOK_URL(+ 可选 DINGTALK_SECRET 加签) */
+  dingtalk?: { enabled?: boolean };
+  /** WECOM_WEBHOOK_URL(企业微信群机器人,地址里的 key 即凭证) */
+  wecom?: { enabled?: boolean };
+  /** SLACK_WEBHOOK_URL(Slack Incoming Webhook) */
+  slack?: { enabled?: boolean };
 }
 
 export interface LimitsConfig {

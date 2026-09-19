@@ -1,17 +1,21 @@
-# 每日早报 + 晚报 + 随时快报:GitHub Actions 定时触发,零服务器成本。
+# 每日早报 + 晚报 + 随时快报:GitHub Actions 生成并推送,零服务器成本。
 #
-# 发布时刻:cron 直接定在目标时刻(不等待)。GitHub 的定时任务是排队执行的,
-# 高峰期可能晚几分钟到几十分钟到达,这属于平台行为,本项目不做等待补偿。
-#   UTC 00:00 = 北京 08:00 → 早报
-#   UTC 13:00 = 北京 21:00 → 晚报
-# (若想尽量准点:把下面 cron 各提前 15~20 分钟,并把 config 的 schedule.lockTime 设为 true,
-#  程序会等到目标时刻再发 —— 代价是等待期间占用 Actions 分钟数。)
+# 定时不在这里做:由 Cloudflare Worker 的 cron 准点 POST /dispatches 触发本 workflow。
+# 实测 GitHub 的 schedule 会排队 0~8 小时(早报常在凌晨或中午才发),而 dispatch
+# 触发后约 4 秒起跑、全程约 35 秒。cron 表达式见 cloudflare/wrangler.toml。
+# 不想部署 Worker 的话,把下面 `on.schedule` 的注释打开也能跑(到达时间受排队影响)。
+#
+# 触发参数一律走 client_payload(见 cloudflare/telegram-trigger.js 的 TRIGGERS/CRON_JOBS):
+#   mode       morning | evening | quick   —— 报告类型
+#   scheduled  true                       —— 启用"当日已发"幂等(定时链路专用)
+#   only       逗号分隔的模块名           —— 只跑部分模块,如 only=rss,baiduhot
+#   force      true / dryRun true         —— 忽略幂等 / 仅预览
 name: 每日早晚报
 
 on:
-  schedule:
-    - cron: "0 0 * * *"  # 北京 08:00 早报
-    - cron: "0 13 * * *" # 北京 21:00 晚报
+  # schedule:                    # 兜底路径:不用 Worker 时才打开(注意会排队)
+  #   - cron: "0 0 * * *"        # 北京 08:00 早报
+  #   - cron: "0 13 * * *"       # 北京 21:00 晚报
   workflow_dispatch: # 手动触发:可选模式,支持预览
     inputs:
       mode:
@@ -24,11 +28,11 @@ on:
         type: boolean
         default: false
       force:
-        description: "忽略去重状态与发布锁,强制重发"
+        description: "忽略去重状态与当日幂等,强制重发"
         type: boolean
         default: false
-  # 外部按需触发(手机快捷指令 / 自动化):POST /repos/{owner}/{repo}/dispatches
-  #   body: {"event_type": "quick-report"}
+  # Worker 到点触发 / 手机快捷指令:POST /repos/{owner}/{repo}/dispatches
+  #   body: {"event_type":"quick-report","client_payload":{"mode":"quick"}}
   repository_dispatch:
     types: [quick-report]
 
@@ -36,13 +40,16 @@ on:
 permissions:
   contents: read
 
+# 按"触发来源 + 模式"分道:手动快报不会被同时进行的定时任务排在后面
 concurrency:
-  group: daily-report
+  group: report-${{ github.event_name }}-${{ github.event.client_payload.mode || inputs.mode || 'auto' }}
   cancel-in-progress: false
 
 jobs:
   report:
     runs-on: ubuntu-latest
+    # 本 workflow 不在 runner 上等待发布时刻(等待会被这个超时杀掉);
+    # 若重新打开 config 的 schedule.lockTime,必须同时把下面调大到超过 maxWaitMinutes。
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -71,27 +78,48 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          DINGTALK_WEBHOOK_URL: ${{ secrets.DINGTALK_WEBHOOK_URL }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           QWEATHER_API_KEY: ${{ secrets.QWEATHER_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }} # 提升 GitHub API 限额(60→5000 次/小时)
+          # client_payload 与手动表单都经 env 传入,不直接插值进脚本(避免脚本注入)
+          CP_MODE: ${{ github.event.client_payload.mode }}
+          CP_SCHEDULED: ${{ github.event.client_payload.scheduled }}
+          CP_ONLY: ${{ github.event.client_payload.only }}
+          CP_FORCE: ${{ github.event.client_payload.force }}
+          CP_DRY: ${{ github.event.client_payload.dryRun }}
+          IN_MODE: ${{ inputs.mode }}
+          IN_FORCE: ${{ inputs.force }}
+          IN_DRY: ${{ inputs.dryRun }}
         run: |
+          set -euo pipefail
+
+          MODE="${CP_MODE:-${IN_MODE:-}}"
+          ONLY="${CP_ONLY:-}"
+          SCHEDULED="${CP_SCHEDULED:-}"
+
+          # 事件类型就叫 quick-report:没带 mode 的外部触发按快报处理(快照语义)
+          if [[ -z "$MODE" && "${GITHUB_EVENT_NAME:-}" == "repository_dispatch" ]]; then MODE="quick"; fi
+
+          # 打开 on.schedule 兜底时也算定时链路(带当日幂等)
+          if [[ "${GITHUB_EVENT_NAME:-}" == "schedule" ]]; then SCHEDULED="true"; fi
+
+          # only 来自外部输入,限定为模块名字符后才拼进命令行
+          if [[ -n "$ONLY" && ! "$ONLY" =~ ^[A-Za-z][A-Za-z0-9_,]*$ ]]; then
+            echo "忽略非法 only 值: $ONLY"
+            ONLY=""
+          fi
+
           FLAGS=""
-
-          # 仅"定时触发"启用发布锁(等待到点 + 当日幂等);手动触发立即发送
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            FLAGS="$FLAGS --scheduled"
-          fi
-
-          # 快报:repository_dispatch 事件,或手动选择 mode=quick
-          MODE="${{ inputs.mode }}"
-          if [[ "${{ github.event_name }}" == "repository_dispatch" || "$MODE" == "quick" ]]; then
-            FLAGS="$FLAGS --quick"
-          fi
-          if [[ "$MODE" == "morning" || "$MODE" == "evening" ]]; then
-            FLAGS="$FLAGS --kind=$MODE"
-          fi
-
-          if [[ "${{ inputs.force }}" == "true" ]]; then FLAGS="$FLAGS --force"; fi
-          if [[ "${{ inputs.dryRun }}" == "true" ]]; then FLAGS="$FLAGS --dry-run --force"; fi
+          if [[ "$MODE" == "quick" ]]; then FLAGS="$FLAGS --quick"; fi
+          if [[ "$MODE" == "morning" || "$MODE" == "evening" ]]; then FLAGS="$FLAGS --kind=$MODE"; fi
+          if [[ -n "$ONLY" ]]; then FLAGS="$FLAGS --only=$ONLY"; fi
+          # 定时链路带幂等:同一天同一时段已成功发送过就跳过,重复触发不会重复推送
+          if [[ "$SCHEDULED" == "true" ]]; then FLAGS="$FLAGS --scheduled"; fi
+          if [[ "${CP_FORCE:-}" == "true" || "${IN_FORCE:-}" == "true" ]]; then FLAGS="$FLAGS --force"; fi
+          if [[ "${CP_DRY:-}" == "true" || "${IN_DRY:-}" == "true" ]]; then FLAGS="$FLAGS --dry-run --force"; fi
 
           echo "运行参数: $FLAGS"
           npm run morning -- $FLAGS

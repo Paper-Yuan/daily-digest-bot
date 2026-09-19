@@ -2,7 +2,7 @@
 
 > 调研时间：2026-09-14
 > 调研方式：GitHub 搜索 + 仓库元数据（`gh api`）+ README 原文核对，所有 star 为调研当日近似值。
-> 对比对象：`Paper-Yuan/daily-digest-bot`（TypeScript + GitHub Actions，零服务器，早 08:00 / 晚 21:00 双时段，天气 + ICS 日历/周次课表 + GitHub Release/高星发现 + RSS + 百度热搜，推送 Telegram / 飞书）。
+> 对比对象：`Paper-Yuan/daily-digest-bot`（TypeScript + GitHub Actions，零服务器，早 08:00 / 晚 21:00 双时段，天气 + ICS 日历/周次课表 + GitHub Release/高星发现 + RSS + 百度热搜，推送 Telegram / 飞书 / 钉钉 / 企业微信 / Slack）。
 
 ---
 

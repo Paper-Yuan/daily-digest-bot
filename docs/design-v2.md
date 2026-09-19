@@ -71,6 +71,8 @@ ReportContext ──→ renderReportImage(ctx, opts) ──→ Buffer(PNG) | nul
 | --- | --- |
 | Telegram | `sendPhoto` multipart 先发图片,再发文本(图文分离,文本仍可复制) |
 | 飞书 | webhook API 不支持直接传图,忽略图片并记一行说明,文本照常 |
+| 钉钉 / 企业微信 | 同飞书:webhook 传不了本地 PNG,只发文本;markdown 上限按字节算,故按 UTF-8 字节分块 |
+| Slack | incoming webhook 只发文本(裸链接由 Slack 自己变可点),`unfurl_links=false` 免得每条链接都展开预览 |
 | 控制台 | 写入 `data/out/report-<ts>.png` 并打印路径与体积,便于本地肉眼检查 |
 
 ### 降级与测试
@@ -82,6 +84,13 @@ ReportContext ──→ renderReportImage(ctx, opts) ──→ Buffer(PNG) | nul
 ---
 
 ## 三、改动 2:发布时刻锁定
+
+> **⚠️ 本节方案已被取代(v3)**:"提前启动 + 在 runner 上等到点"实测不成立 —— 本账号的
+> Actions `schedule` 排队可达 0~8 小时,而等待中的任务会被 workflow 的 `timeout-minutes: 10`
+> 杀掉(2026-09-17 早报因此整条未发)。现在准点由 Cloudflare Worker 的 cron 触发
+> `repository_dispatch` 保证,`client_payload` 携带 `mode / scheduled / only / force / dryRun`,
+> `scheduled` 只保留"当日已发"幂等。`lockTime` 代码仍在但默认关闭,现行架构见 README 与
+> `cloudflare/README.md`。
 
 ### 核心洞察
 

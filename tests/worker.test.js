@@ -9,6 +9,7 @@
  * 缺少 allowJs 而报错。
  */
 
+import { readFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const SECRET = 'test-secret';
@@ -150,7 +151,10 @@ describe('/quick 触发', () => {
     const dispatches = callsTo('/dispatches');
     expect(dispatches).toHaveLength(1);
     expect(String(dispatches[0][0])).toBe('https://api.github.com/repos/owner/repo/dispatches');
-    expect(JSON.parse(dispatches[0][1].body)).toEqual({ event_type: 'quick-report' });
+    expect(JSON.parse(dispatches[0][1].body)).toEqual({
+      event_type: 'quick-report',
+      client_payload: { mode: 'quick' },
+    });
     expect(dispatches[0][1].headers.authorization).toBe(`Bearer ${ENV.GITHUB_TOKEN}`);
   });
 
@@ -195,6 +199,61 @@ describe('/quick 触发', () => {
 
     const texts = callsTo('/sendMessage').map((c) => JSON.parse(c[1].body).text);
     expect(texts.some((t) => t.includes('触发失败') && t.includes('401'))).toBe(true);
+  });
+});
+
+describe('scheduled 定时触发', () => {
+  const dispatchedPayloads = () =>
+    callsTo('/dispatches').map((c) => JSON.parse(c[1].body).client_payload);
+
+  it('早报/晚报两个 cron 各自映射到对应 mode,并带当日幂等标记', async () => {
+    for (const [cron, mode] of [['0 0 * * *', 'morning'], ['0 13 * * *', 'evening']]) {
+      fetchMock.mockClear();
+      const { ctx, settle } = makeCtx();
+      await worker.scheduled({ cron }, ENV, ctx);
+      await settle();
+      expect(dispatchedPayloads()).toEqual([{ mode, scheduled: true }]);
+    }
+  });
+
+  it('登记的 cron 必须与 wrangler.toml 的 [triggers].crons 一致', async () => {
+    const toml = await readFile(new URL('../cloudflare/wrangler.toml', import.meta.url), 'utf8');
+    const declared = /\ncrons\s*=\s*\[([^\]]*)\]/.exec(toml)?.[1] ?? '';
+    const crons = [...declared.matchAll(/'([^']+)'|"([^"]+)"/g)].map((m) => m[1] ?? m[2]);
+    expect(crons.length).toBeGreaterThan(0);
+
+    for (const cron of crons) {
+      fetchMock.mockClear();
+      const { ctx, settle } = makeCtx();
+      await worker.scheduled({ cron }, ENV, ctx);
+      await settle();
+      expect(callsTo('/dispatches')).toHaveLength(1);
+    }
+  });
+
+  it('未登记的 cron 不触发,只记日志', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx, settle } = makeCtx();
+    await worker.scheduled({ cron: '30 4 * * *' }, ENV, ctx);
+    await settle();
+
+    expect(callsTo('/dispatches')).toHaveLength(0);
+    expect(err.mock.calls.flat().join(' ')).toContain('未登记的 cron');
+    err.mockRestore();
+  });
+
+  it('dispatch 失败只记日志(定时场景没有会话可回执)', async () => {
+    fetchMock.mockImplementation(async (url) => {
+      if (String(url).includes('/dispatches')) return new Response('nope', { status: 500 });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx, settle } = makeCtx();
+    await worker.scheduled({ cron: '0 0 * * *' }, ENV, ctx);
+    await settle();
+
+    expect(err.mock.calls.flat().join(' ')).toContain('触发失败');
+    err.mockRestore();
   });
 });
 

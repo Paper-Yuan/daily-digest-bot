@@ -1,12 +1,12 @@
-# 用 Telegram 消息触发快报(Cloudflare Worker)
+# Cloudflare Worker:Telegram 触发器 + 定时闹钟
 
-部署后,你只要在 Telegram 里给机器人发一条 **`/quick`**,大约 1 分钟后就能收到一份快报。
-不需要打开 GitHub,也不需要手机快捷指令。
+部署后:在 Telegram 里发 **`/quick`** 约 1 分钟收到快报;每天 08:00 / 21:00 的早报晚报
+也由它的 cron 准点唤起 Actions。不需要打开 GitHub 页面。
 
 ```
-Telegram ──/quick──→ Cloudflare Worker ──repository_dispatch──→ GitHub Actions ──→ 推送报告给你
-   ↑                      │                                                          │
-   └──────────────────────┴─ 只传"触发信号",报告内容不经过 Worker ─────────────────────┘
+Telegram /quick ──→ ┌──────────────────┐ ─repository_dispatch──→ GitHub Actions ──→ 推送报告给你
+Workers cron ────→  │ Cloudflare Worker │                              ↑
+   到点唤起 ──────→  └──────────────────┘   只传"触发信号",报告内容不经过 Worker
 ```
 
 ## 为什么需要 Worker
@@ -102,6 +102,21 @@ bash set-webhook.sh <BOT_TOKEN> <WORKER_URL> <WEBHOOK_SECRET>
 | `/quick`(或 `/k`) | 立刻生成一份快报(当前快照,不写去重状态,不影响早晚报) |
 | `/help`、`/start` | 显示帮助 |
 
+## 定时闹钟(早报 / 晚报)
+
+这个 Worker 同时是定时任务触发器:`wrangler.toml` 的 `[triggers].crons` 到点调用
+`telegram-trigger.js` 的 `scheduled()`,由它 POST `repository_dispatch` 唤起 Actions。
+
+- cron 一律按 **UTC** 解释:`0 0 * * *` = 北京 08:00(早报),`0 13 * * *` = 北京 21:00(晚报)。
+- 两处要一致:`[triggers].crons` 与代码里的 `CRON_JOBS`。只改前者会打一条
+  「未登记的 cron 表达式」日志并且不触发,便于在 Workers Logs 里立刻发现。
+- cron 只能随 `npx wrangler deploy` 生效 —— 上面那种"后台粘贴代码"的部署方式设不了 cron,
+  要用定时就得装 wrangler(`npm i -g wrangler && wrangler login`)。
+- 为什么不用 GitHub 的 `schedule`:实测它会排队 0~8 小时(早报常在凌晨或中午才到);
+  dispatch 触发则约 4 秒起跑、全程约 35 秒。不想引入 Worker 时,workflow 里也留了
+  一段注释掉的 `on.schedule` 兜底。
+- 重复触发不会重复推送:定时链路带 `scheduled: true`,Actions 侧按"当日已发"幂等。
+
 ## 安全说明
 
 - 这个 Worker 地址是**公开可访问**的,所以身份校验完全依赖 `secret_token` 请求头
@@ -110,7 +125,8 @@ bash set-webhook.sh <BOT_TOKEN> <WORKER_URL> <WEBHOOK_SECRET>
   不在白名单里的会话也只会收到「没有触发权限」,不会消耗你的 Actions 额度。
 - 建议把 `TELEGRAM_CHAT_ID` 只填你自己的会话 id(用 `/quick` 发给机器人时,
   日志里会打印实际到达的 chat id)。
-- **60 秒冷却**:连续点击(手抖双击、客户端重发)只会触发一次,避免白发 Actions 任务。
+- **60 秒冷却(按会话 + 命令)**:同一个命令连点(手抖双击、客户端重发)只会触发一次,
+  但换一条命令不会被连带拦下。
 - Worker 不存储任何报告数据,也不记录消息内容到持久存储。
 
 ## 排查

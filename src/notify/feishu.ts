@@ -13,7 +13,7 @@
 
 import * as crypto from 'crypto';
 import { httpPostJson } from '../utils/http';
-import { chunkText } from './telegram';
+import { chunkText } from './chunk';
 
 /** 飞书返回体:新版 { code, msg },旧版 { StatusCode, StatusMessage } */
 interface FeishuResponse {

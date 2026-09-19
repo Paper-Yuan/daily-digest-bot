@@ -2,7 +2,7 @@
   "name": "daily-digest-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "聚合天气/日历课表/GitHub Release/RSS 的每日早报推送机器人(GitHub Actions 定时触发,零服务器成本)",
+  "description": "聚合天气/日历课表/GitHub/RSS/热搜的每日早晚报推送机器人(Worker cron 准点唤起 GitHub Actions,推送到 Telegram/飞书/钉钉/企业微信/Slack)",
   "scripts": {
     "morning": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",

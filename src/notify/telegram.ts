@@ -10,6 +10,7 @@
  */
 
 import { httpPostForm, httpPostJson } from '../utils/http';
+import { chunkText } from './chunk';
 
 /** sendMessage 返回体(只取关心的字段) */
 interface TelegramResponse {
@@ -21,49 +22,6 @@ interface TelegramResponse {
 const TEXT_CHUNK_MAX = 4096;
 /** html 版留余量:切块上限 3800,降低"标签贴边被拒/被切断"的概率 */
 const HTML_CHUNK_MAX = 3800;
-
-/**
- * 按换行边界把文本切成每块不超过 maxLen 的数组;仅单行超长时才硬切。
- * 行优先聚块,保证早报里的条目/摘要尽量不被拦腰截断。
- */
-export function chunkText(s: string, maxLen: number): string[] {
-  if (!Number.isFinite(maxLen) || maxLen < 1) {
-    throw new Error(`chunkText: maxLen 必须为正数,收到 ${maxLen}`);
-  }
-  const chunks: string[] = [];
-  let current: string[] = [];
-  let currentLen = 0; // current 用 '\n' 连接后的长度
-
-  const flush = (): void => {
-    const joined = current.join('\n');
-    current = [];
-    currentLen = 0;
-    // 丢弃空块:空消息会被 Telegram 拒收
-    if (joined.length > 0) chunks.push(joined);
-  };
-
-  for (const line of s.split('\n')) {
-    // 单行超长:先收掉已攒的内容,再按 maxLen 硬切
-    if (line.length > maxLen) {
-      flush();
-      for (let i = 0; i < line.length; i += maxLen) {
-        chunks.push(line.slice(i, i + maxLen));
-      }
-      continue;
-    }
-    const nextLen = current.length === 0 ? line.length : currentLen + 1 + line.length;
-    if (nextLen > maxLen) {
-      flush();
-      current = [line];
-      currentLen = line.length;
-    } else {
-      current.push(line);
-      currentLen = nextLen;
-    }
-  }
-  flush();
-  return chunks.length > 0 ? chunks : [s];
-}
 
 /** 发送单条消息;parseMode 缺省表示纯文本(不带 parse_mode 字段) */
 async function postMessage(

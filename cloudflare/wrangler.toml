@@ -17,4 +17,11 @@ compatibility_date = "2026-09-14"
 [vars]
 GITHUB_REPO = "your-github-username/daily-digest-bot"
 
+# 定时闹钟(UTC):0 0 = 北京 08:00 早报,0 13 = 北京 21:00 晚报。
+# 表达式必须与 telegram-trigger.js 里 CRON_JOBS 的键一一对应,否则 scheduled()
+# 只会打一条"未登记的 cron 表达式"日志而不触发。改推送时间就改这两处(北京 −8 = UTC)。
+# 注意:cron 只能通过 `npx wrangler deploy` 生效,在 Cloudflare 后台粘贴代码部署设不了。
+[triggers]
+crons = ["0 0 * * *", "0 13 * * *"]
+
 # Worker 不存储任何报告数据,无需 KV / D1 / R2 绑定。

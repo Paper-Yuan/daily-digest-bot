@@ -2,7 +2,10 @@
 # 个人聚合早报配置(复制为 config/config.yaml 后修改)
 # 密钥一律走环境变量,不写在这里:
 #   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
-#   FEISHU_WEBHOOK_URL / FEISHU_SECRET(可选,加签密钥)
+#   FEISHU_WEBHOOK_URL   / FEISHU_SECRET(可选,加签密钥)
+#   DINGTALK_WEBHOOK_URL / DINGTALK_SECRET(可选,加签密钥)
+#   WECOM_WEBHOOK_URL    (企业微信群机器人,地址里的 key 即凭证)
+#   SLACK_WEBHOOK_URL    (Slack Incoming Webhook)
 #   QWEATHER_API_KEY(可选,和风天气预警)
 #   GITHUB_TOKEN(GitHub Actions 会自动注入,本地可不配)
 # ============================================================
@@ -93,12 +96,21 @@ personal:
   certTimeoutMs: 8000            # 单次 TLS 探测超时
 
 notify:
-  # enabled 缺省 = 自动:配了环境变量就发送,没配就跳过
+  # enabled 缺省 = 自动:配了该渠道的环境变量就发送,没配就跳过
   # enabled: true  = 强制启用,缺环境变量按故障处理(任务退出码 1,便于在 CI 里暴露配置遗漏)
+  # enabled: false = 关闭该渠道(环境变量齐了也不发)
+  # 各渠道并发发送,任一成功即算本次已送达;不收图片的渠道自动只发文本,不算失败。
   telegram:
-    enabled: ~
+    enabled: ~                   # TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
   feishu:
-    enabled: ~
+    enabled: ~                   # FEISHU_WEBHOOK_URL(+ FEISHU_SECRET 加签)
+  dingtalk:
+    enabled: ~                   # DINGTALK_WEBHOOK_URL(+ DINGTALK_SECRET 加签)
+                                 # 机器人若开"自定义关键词",关键词要出现在标题或正文里
+  wecom:
+    enabled: ~                   # WECOM_WEBHOOK_URL
+  slack:
+    enabled: ~                   # SLACK_WEBHOOK_URL
 
 limits:
   maxCalendarEvents: 10
@@ -107,17 +119,20 @@ limits:
   maxHotItems: 10                # 热搜条数上限
   summaryChars: 100              # Release/RSS 摘要截断长度
 
-# 发布时刻:默认 cron 定在目标时刻直接发送(不做等待)。
-# GitHub 的定时任务会有排队延迟,实际到达时间可能比目标晚几分钟到几十分钟。
-# 若希望尽量准点:把 lockTime 设为 true,并把 workflow 的 cron 提前 15~20 分钟
-# (程序启动后会等到目标时刻再发;代价是等待期间占用 Actions 分钟数)。
+# 发布时刻:这里的时刻只在 lockTime=true 时被程序用到。
+# 默认(推荐)准点交给 Cloudflare Worker 的 cron(见 cloudflare/ 目录):到点 dispatch
+# 触发 Actions,约 35 秒送达。GitHub 自带的 schedule 实测会排队 0~8 小时。
+# 不想部署 Worker 时:打开 workflow 里注释掉的 `schedule:` 也能跑,只是到达时间受排队影响。
+# lockTime=true 是让程序自己在 runner 上干等到点 —— 必须同时把 workflow 的
+# timeout-minutes 调到大于 maxWaitMinutes,否则任务会在等待中被杀掉、当天不再推送。
 schedule:
   morning: "08:00"               # 早报目标发布时刻(本地时区)
   evening: "21:00"               # 晚报目标发布时刻
   lockTime: false                # true = 等到目标时刻再发
   maxWaitMinutes: 30             # lockTime=true 时的等待上限,超过则立即发送
 
-# 图片版报告:与文本一同推送(Telegram 先图后文;飞书 webhook 不支持图片,自动仅发文本)。
+# 图片版报告:与文本一同推送。只有 Telegram 收图;飞书/钉钉/企业微信/Slack 的 webhook
+# 都传不了本地图片,会自动仅发文本(不报错、不影响该渠道的文本送达)。
 # 生成失败(无字体/无网络/库不可用)会自动降级为纯文本,绝不影响推送本身。
 image:
   enabled: true

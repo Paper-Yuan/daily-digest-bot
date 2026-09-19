@@ -26,6 +26,7 @@ import type {
   LimitsConfig,
   ModuleName,
   ModuleResult,
+  NotifyConfig,
   PersonalSection,
   ReportContext,
   ReportFailure,
@@ -54,6 +55,9 @@ import { renderReportImage } from './render/image';
 import { sendConsole } from './notify/console';
 import { sendTelegram } from './notify/telegram';
 import { sendFeishu } from './notify/feishu';
+import { sendDingtalk } from './notify/dingtalk';
+import { sendWecom } from './notify/wecom';
+import { sendSlack } from './notify/slack';
 
 interface CliArgs {
   dryRun: boolean;
@@ -117,38 +121,76 @@ async function safeRun(fn: () => Promise<ModuleResult<SectionPayload>>): Promise
   }
 }
 
+/** 一次推送的消息体:文本版 + Telegram 用的 HTML 版 */
+type ReportMessage = { text: string; html: string };
+
+/** 取已确认存在的环境变量,只为收窄类型 */
+function str(env: NodeJS.ProcessEnv, key: string): string {
+  return env[key] ?? '';
+}
+
+/**
+ * 推送渠道清单:加一个渠道 = 实现一个 send 函数 + 在这里登记一行。
+ * required 里任一环境变量缺失就自动跳过该渠道。
+ */
+const CHANNELS: Array<{
+  name: keyof NotifyConfig;
+  required: string[];
+  send: (env: NodeJS.ProcessEnv, msg: ReportMessage, image: Buffer | null) => Promise<void>;
+}> = [
+  {
+    name: 'telegram',
+    required: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
+    send: (env, msg, image) =>
+      sendTelegram(
+        msg,
+        { botToken: str(env, 'TELEGRAM_BOT_TOKEN'), chatId: str(env, 'TELEGRAM_CHAT_ID') },
+        image,
+      ),
+  },
+  {
+    name: 'feishu',
+    required: ['FEISHU_WEBHOOK_URL'],
+    send: (env, msg, image) =>
+      sendFeishu(msg, { webhookUrl: str(env, 'FEISHU_WEBHOOK_URL'), secret: env.FEISHU_SECRET }, image),
+  },
+  {
+    name: 'dingtalk',
+    required: ['DINGTALK_WEBHOOK_URL'],
+    send: (env, msg, image) =>
+      sendDingtalk(msg, { webhookUrl: str(env, 'DINGTALK_WEBHOOK_URL'), secret: env.DINGTALK_SECRET }, image),
+  },
+  {
+    name: 'wecom',
+    required: ['WECOM_WEBHOOK_URL'],
+    send: (env, msg, image) => sendWecom(msg, { webhookUrl: str(env, 'WECOM_WEBHOOK_URL') }, image),
+  },
+  {
+    name: 'slack',
+    required: ['SLACK_WEBHOOK_URL'],
+    send: (env, msg, image) => sendSlack(msg, { webhookUrl: str(env, 'SLACK_WEBHOOK_URL') }, image),
+  },
+];
+
 /** 把启用渠道的发送动作聚合成"至少一个成功才算成功"的结果列表 */
 async function sendToChannels(
   cfg: BotConfig,
-  msg: { text: string; html: string },
+  msg: ReportMessage,
   image: Buffer | null,
 ): Promise<{ attempted: number; okCount: number }> {
   const env = process.env;
   const attempts: { name: string; run: () => Promise<void> }[] = [];
 
-  const tg = cfg.notify.telegram?.enabled;
-  if (tg !== false) {
-    const botToken = env.TELEGRAM_BOT_TOKEN;
-    const chatId = env.TELEGRAM_CHAT_ID;
-    if (botToken && chatId) {
-      attempts.push({ name: 'telegram', run: () => sendTelegram(msg, { botToken, chatId }, image) });
-    } else if (tg === true) {
+  for (const ch of CHANNELS) {
+    const enabled = cfg.notify[ch.name]?.enabled;
+    if (enabled === false) continue; // 显式关闭:环境变量齐了也不发
+    if (ch.required.every((key) => Boolean(env[key]))) {
+      attempts.push({ name: ch.name, run: () => ch.send(env, msg, image) });
+    } else if (enabled === true) {
+      const missing = ch.required.join(' / ');
       attempts.push({
-        name: 'telegram',
-        run: async () => { throw new Error('已强制启用 telegram,但缺少环境变量 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID'); },
-      });
-    }
-  }
-
-  const fs = cfg.notify.feishu?.enabled;
-  if (fs !== false) {
-    const webhookUrl = env.FEISHU_WEBHOOK_URL;
-    if (webhookUrl) {
-      attempts.push({ name: 'feishu', run: () => sendFeishu(msg, { webhookUrl, secret: env.FEISHU_SECRET }, image) });
-    } else if (fs === true) {
-      attempts.push({
-        name: 'feishu',
-        run: async () => { throw new Error('已强制启用 feishu,但缺少环境变量 FEISHU_WEBHOOK_URL'); },
+        name: ch.name,
+        run: async () => { throw new Error(`已强制启用 ${ch.name},但缺少环境变量 ${missing}`); },
       });
     }
   }
@@ -270,6 +312,11 @@ async function main(): Promise<void> {
   for (const r of results) {
     if (!r.res.ok && r.res.error) failures.push({ module: r.name, message: r.res.error });
     for (const w of r.res.warnings ?? []) failures.push({ module: r.name, message: w });
+  }
+  // --only 点名的模块如果被配置挡住(或名字打错了),必须说出来:
+  // 否则"只跑一个模块"的快报会静默变成一条"今日无事"的假健康报告
+  for (const name of (only ?? []).filter((n) => !runners.some((r) => r.name === n))) {
+    failures.push({ module: name as ModuleName, message: '未启用:点名了它,但 config 里没打开(或不是有效模块名)' });
   }
 
   // 快报用更精简的条数上限(quick.limits 覆盖 limits 的同名字段)

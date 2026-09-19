@@ -1,14 +1,17 @@
 /**
  * 早报渲染:ReportContext → 纯文本 + Telegram HTML 两种版式。
  *
+ * 两种版式的分工:HTML 版只给 Telegram;飞书 / 钉钉 / 企业微信 / Slack 拿到的是文本版,
+ * 所以文本版必须自己就能读 —— 分块靠 "▌" 竖条,层次靠缩进,链接以原文出现。
+ *
  * 可视性设计:
- *  - 纯文本(飞书/控制台)没有粗体,用 "▌" 竖条标记区块标题,扫读时快速定位;
- *  - 区块标题统一 "emoji 名称 · N 条" 的计数格式;
+ *  - 区块标题统一 "▌emoji 名称 · N 条" 的计数格式,一眼看出这一块有多长;
  *  - 次要信息(描述/摘要)在文本版缩进两格,在 Telegram 版用 <blockquote>
  *    渲染成左侧引用条,与主行拉开层次;引用始终单行,不会跨分块边界;
+ *  - 数字都带单位标签(热度 12.3万、⭐ 1.6k、还有 5 天),不留裸数字猜含义;
  *  - 天气拆为"天况+温度 / 降水概率"两行,温度取整,降低数字密度;
  *  - 星数用 1.6k 紧凑格式;分隔符统一全角(｜ （） ：),贴合中文排版;
- *  - html 仅用 Telegram 允许的 <b> / <a> / <blockquote> 标签,
+ *  - html 仅用 Telegram 允许的 <b> / <a> / <blockquote> / <i> 标签,
  *    所有动态文本先经 escapeHtml,防止内容中的 & < > 破坏标签结构。
  */
 
@@ -20,6 +23,7 @@ import type {
   PersonalSection,
   ReportContext,
   ReportFailure,
+  ReportKind,
   RssItem,
   WeatherInfo,
   WeatherWarning,
@@ -58,24 +62,36 @@ function fmtHeat(n: number): string {
 function headerBlock(ctx: ReportContext): Block {
   const emoji = ctx.reportKind === 'evening' ? '🌙' : ctx.reportKind === 'quick' ? '⚡' : '🌅';
   const title = ctx.reportKind === 'evening' ? '晚报' : ctx.reportKind === 'quick' ? '快报' : '早报';
-  const heading = `${emoji} ${title} · ${ctx.dateLabel} ${ctx.timeLabel}`;
+  // 快报与早晚报的语义差别(快照 vs 增量)写在标题里,免得用户以为没收到当天的报告
+  const tag = ctx.reportKind === 'quick' ? '(当前快照)' : '';
+  const heading = `${emoji} ${title}${tag} · ${ctx.dateLabel} ${ctx.timeLabel}`;
   return {
     text: [heading, `${ctx.greeting}！`, '────────────────────'],
     html: [
-      `<b>${emoji} ${title}</b> · ${escapeHtml(ctx.dateLabel)} ${escapeHtml(ctx.timeLabel)}`,
+      `<b>${emoji} ${title}${escapeHtml(tag)}</b> · ${escapeHtml(ctx.dateLabel)} ${escapeHtml(ctx.timeLabel)}`,
       `${escapeHtml(ctx.greeting)}！`,
     ],
   };
 }
 
+/* ---------------- 页脚 ---------------- */
+
+function footerBlock(reportKind: ReportKind): Block {
+  const line =
+    reportKind === 'quick'
+      ? '快报只是当下这一眼的快照,不会占用今日早晚报的增量内容'
+      : '定时发送的是当日新增;想要此刻的完整快照,发 /quick 随时要一份';
+  return { text: ['────────────────────', line], html: [`<i>${escapeHtml(line)}</i>`] };
+}
+
 /* ---------------- 模块故障 ---------------- */
 
 function failureBlock(failures: ReportFailure[]): Block {
-  const title = '▌⚠️ 模块故障';
   // module 是固定枚举字面量,无需转义;message 可能含任意字符
+  const note = '以下模块本次没取到数据,报告内容可能不完整';
   return {
-    text: [title, ...failures.map((f) => `• ${f.module}：${f.message}`)],
-    html: [`<b>⚠️ 模块故障</b>`, ...failures.map((f) => `• ${f.module}：${escapeHtml(f.message)}`)],
+    text: [textTitle('⚠️', '模块故障', failures.length), note, ...failures.map((f) => `• ${f.module}：${f.message}`)],
+    html: [`<b>⚠️ 模块故障 · ${failures.length} 条</b>`, escapeHtml(note), ...failures.map((f) => `• ${f.module}：${escapeHtml(f.message)}`)],
   };
 }
 
@@ -192,8 +208,8 @@ function biliHotBlock(items: HotSearchItem[]): Block {
   const html = [`<b>📺 B 站热搜 · ${items.length} 条</b>`];
   for (const it of items) {
     const flag = it.isNew ? '🆕 ' : '';
-    // 热度值用 k 压缩(1226970 -> 122.7万 太长,统一 w 单位)
-    const heat = it.heat !== undefined ? `  🔥${fmtHeat(it.heat)}` : '';
+    // 热度值压成 12.7万 这种写法,并带"热度"标签,避免读成一串无意义的数字
+    const heat = it.heat !== undefined ? `  🔥 热度 ${fmtHeat(it.heat)}` : '';
     text.push(`${it.rank}. ${flag}${it.word}${heat}`);
     const safeWord = escapeHtml(it.word);
     html.push(`${it.rank}. ${flag}${safeWord}${escapeHtml(heat)}`);
@@ -256,10 +272,11 @@ function activityLine(d: GithubDiscovery): string | undefined {
 }
 
 function discoveryBlock(items: GithubDiscovery[]): Block {
-  // 榜首即是打分最高的项目,带序号才读得出"这是榜单"
-  const title = textTitle('🚀', 'GitHub 新项目榜', items.length);
+  // 榜首即是打分最高的项目,带序号才读得出"这是榜单";
+  // emoji 与 Release 块区分开(两个 🚀 并排时扫读会混)
+  const title = textTitle('✨', 'GitHub 新项目榜', items.length);
   const text = [title];
-  const html = [`<b>🚀 GitHub 新项目榜 · ${items.length} 条</b>`];
+  const html = [`<b>✨ GitHub 新项目榜 · ${items.length} 条</b>`];
   items.forEach((d, i) => {
     const meta = `⭐ ${fmtStars(d.stars)}${d.language ? ` · ${d.language}` : ''}`;
     const rank = `${i + 1}.`;
@@ -320,6 +337,7 @@ export function renderReport(ctx: ReportContext): { text: string; html: string }
     const empty = '今天没有新内容，一切安好 🌿';
     blocks.push({ text: [empty], html: [empty] });
   }
+  blocks.push(footerBlock(ctx.reportKind));
   return {
     text: blocks.map((b) => b.text.join('\n')).join('\n\n'),
     html: blocks.map((b) => b.html.join('\n')).join('\n\n'),

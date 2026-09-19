@@ -121,7 +121,7 @@ describe('renderReport', () => {
       }],
     });
     const { text, html } = renderReport(ctx);
-    expect(text).toContain('▌🚀 GitHub 新项目榜 · 1 条');
+    expect(text).toContain('▌✨ GitHub 新项目榜 · 1 条');
     expect(text).toContain('1. cn/cool  ⭐ 3.2k · TypeScript');
     expect(text).toContain('  很酷的<b>项目');
     expect(html).toContain('<a href="https://github.com/cn/cool">cn/cool</a>');
@@ -273,8 +273,8 @@ describe('B 站热搜区块', () => {
       ],
     }));
     expect(text).toContain('▌📺 B 站热搜 · 2 条');
-    expect(text).toContain('1. 🆕 长庚伴月  🔥122.7万');
-    expect(text).toContain('2. LPL总决赛  🔥8600');
+    expect(text).toContain('1. 🆕 长庚伴月  🔥 热度 122.7万');
+    expect(text).toContain('2. LPL总决赛  🔥 热度 8600');
     expect(html).toContain('<b>📺 B 站热搜 · 2 条</b>');
   });
 
@@ -351,5 +351,28 @@ describe('个人提醒区块', () => {
       personal: { anniversaries: [], certs: [] },
     }));
     expect(text).not.toContain('🎯');
+  });
+});
+
+describe('页脚与区块标题文案', () => {
+  it('早晚报页脚给出"随时快照"的入口,快报页脚说明它是快照', () => {
+    const morning = renderReport(baseCtx({ hasContent: true }));
+    expect(morning.text).toContain('想要此刻的完整快照,发 /quick 随时要一份');
+    expect(morning.html).toContain('<i>');
+
+    const quick = renderReport(baseCtx({ hasContent: true, reportKind: 'quick' }));
+    expect(quick.text).toContain('⚡ 快报(当前快照) ·');
+    expect(quick.text).toContain('不会占用今日早晚报的增量内容');
+    expect(quick.text).not.toContain('发 /quick');
+  });
+
+  it('故障块带条数与一句解释', () => {
+    const { text, html } = renderReport(baseCtx({
+      hasContent: true,
+      failures: [{ module: 'weather', message: '超时' }],
+    }));
+    expect(text).toContain('▌⚠️ 模块故障 · 1 条');
+    expect(text).toContain('以下模块本次没取到数据,报告内容可能不完整');
+    expect(html).toContain('<b>⚠️ 模块故障 · 1 条</b>');
   });
 });
